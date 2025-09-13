@@ -5,6 +5,17 @@ import 'package:provider/provider.dart';
 import '../services/reference_search_service.dart';
 import 'practice_screen.dart';
 
+// ---------------------------------------------------------------------------
+// SearchScreen
+// ---------------------------------------------------------------------------
+// Lets the user enter e621 tags (rating:safe enforced automatically) and pick
+// a reference image to draw from.
+// Platform nuance:
+// - Native (desktop/mobile): we download + decode the image so we can access
+//   pixels for overlay review later.
+// - Web: CORS blocks pixel access, so we just pass the URL and use an <img>
+//   element (Image.network) side-by-side with the canvas.
+
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
   @override
@@ -12,11 +23,14 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
+  // Pre-fill with a sample query to make first run feel alive.
   final _controller = TextEditingController(text: 'standing canine');
 
   @override
   void initState() {
     super.initState();
+    // Trigger an initial search after the first frame (avoids doing provider
+    // work during build).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ReferenceSearchService>().search(_controller.text);
     });
@@ -24,7 +38,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final search = context.watch<ReferenceSearchService>();
+    final search = context
+        .watch<ReferenceSearchService>(); // Rebuild when results/loading change
     return Scaffold(
       appBar: AppBar(title: const Text('Reference Search')),
       body: Column(
@@ -76,12 +91,13 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
               itemCount: search.results.length,
               itemBuilder: (context, i) {
-                final r = search.results[i];
+                final r =
+                    search.results[i]; // Single search result (preview + score)
                 return GestureDetector(
                   onTap: () async {
                     final navigator = Navigator.of(context);
                     if (kIsWeb) {
-                      // Web: pass only URL, decoding done by <img> element; drawing canvas remains separate.
+                      // Web: skip decoding (CORS). Provide URL + source id only.
                       navigator.push(
                         MaterialPageRoute(
                           builder: (_) => PracticeScreen(

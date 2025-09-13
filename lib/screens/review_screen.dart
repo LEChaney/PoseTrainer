@@ -1,6 +1,16 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
+// review_screen.dart
+// ------------------
+// Lets user compare their drawing with the reference.
+// Modes:
+// - Overlay (only when we have decoded reference `ui.Image`). Adjustable
+//   opacity for both reference and drawing.
+// - Side-by-side (always available). Used automatically for web fallback or
+//   when reference decoding failed.
+// CustomPainter (`_OverlayPainter`) handles scale-to-fit logic for overlay.
+
 class ReviewScreen extends StatefulWidget {
   final ui.Image? reference; // may be null when only URL available (web)
   final String? referenceUrl; // raw network fallback (web only side-by-side)

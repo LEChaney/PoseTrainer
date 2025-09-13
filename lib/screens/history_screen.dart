@@ -3,6 +3,11 @@ import 'package:provider/provider.dart';
 import '../services/session_service.dart';
 import 'review_screen.dart';
 
+// history_screen.dart
+// -------------------
+// Shows a simple list of completed practice sessions (in‑memory only for now).
+// Tapping an item navigates to ReviewScreen to compare drawing vs reference.
+
 class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key});
   @override
@@ -14,7 +19,7 @@ class HistoryScreen extends StatelessWidget {
           ? const Center(child: Text('No sessions yet.'))
           : ListView.separated(
               itemCount: history.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
+              separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 final s = history[i];
                 return ListTile(

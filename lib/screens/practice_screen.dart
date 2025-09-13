@@ -6,6 +6,18 @@ import '../services/brush_engine.dart';
 import '../services/session_service.dart';
 import 'review_screen.dart';
 
+// practice_screen.dart
+// --------------------
+// Core drawing experience.
+// Key concepts for newcomers:
+// - We maintain a backing `ui.Image` (_base) that stores committed strokes.
+// - Current in‑progress stroke lives in BrushEngine.live (drawn every frame).
+// - Pointer events are buffered (_pending) then flushed each animation tick
+//   to keep UI responsive while batching smoothing.
+// - A Ticker (from SingleTickerProviderStateMixin) drives per-frame updates.
+// - Reference can be provided as a decoded image (native) OR just a URL (web).
+// - Layout adapts: wide = side-by-side, narrow = vertical stack.
+
 class PracticeScreen extends StatefulWidget {
   final ui.Image? reference; // may be null on web if we only have URL
   final String? referenceUrl; // used on web to display via Image.network

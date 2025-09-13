@@ -2,14 +2,25 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 
+// ---------------------------------------------------------------------------
+// Brush Engine (single soft round brush)
+// ---------------------------------------------------------------------------
+// Converts raw pointer input into a visually smooth stroke by:
+// 1. Capturing pointer samples as InputPoint (x, y, pressure, timestamp).
+// 2. Smoothing x, y, and pressure separately with the One-Euro filter.
+// 3. Emitting evenly spaced "dabs" (small stamped sprites) along the path.
+// 4. Batching all dabs for the in‑progress stroke with drawAtlas for speed.
+// 5. Compositing (merging) dabs into a base image when the stroke completes.
+// Keeping this minimal helps maintain responsiveness and clarity.
+
 class BrushParams {
-  final double sizePx;
-  final double spacing; // fraction of diameter
-  final double flow; // 0..1
-  final double hardness; // 0..1
-  final double opacity; // 0..1
-  final double pressureSize;
-  final double pressureFlow;
+  final double sizePx; // Base brush diameter in logical pixels
+  final double spacing; // Dab spacing relative to diameter (smaller => denser)
+  final double flow; // Base ink per dab (0..1)
+  final double hardness; // Edge softness (1 = harder edge)
+  final double opacity; // Overall stroke opacity multiplier
+  final double pressureSize; // How strongly pressure changes size
+  final double pressureFlow; // How strongly pressure changes flow
   const BrushParams({
     this.sizePx = 18,
     this.spacing = 0.12,
@@ -22,16 +33,17 @@ class BrushParams {
 }
 
 class InputPoint {
-  final double x, y, pressure; // 0..1
-  final int tMs;
+  final double x, y, pressure; // Normalized pressure 0..1
+  final int tMs; // Millisecond timestamp used to estimate frequency
   const InputPoint(this.x, this.y, this.pressure, this.tMs);
 }
 
 class OneEuro {
-  double freq = 120; // dynamic
-  double minCutoff = 1.0;
-  double beta = 0.015;
-  double dCutoff = 1.0;
+  // Adaptive low‑pass filter balancing noise removal & responsiveness.
+  double freq = 120; // Estimated update frequency (Hz)
+  double minCutoff = 1.0; // Base smoothing
+  double beta = 0.015; // Speed coefficient (higher -> less smoothing when fast)
+  double dCutoff = 1.0; // Derivative cutoff
   _LowPass _x = _LowPass();
   _LowPass _dx = _LowPass();
   int? _lastMs;
@@ -39,7 +51,7 @@ class OneEuro {
   double filter(double value, int tMs) {
     if (_lastMs != null) {
       final dt = (tMs - _lastMs!).clamp(1, 1000);
-      freq = 1000.0 / dt;
+      freq = 1000.0 / dt; // Update frequency based on sample spacing
     }
     _lastMs = tMs;
     final ed = _dx.filter((value - _x.last) * freq, _alpha(dCutoff));
@@ -61,12 +73,12 @@ class OneEuro {
 }
 
 class _LowPass {
-  double _y = 0;
+  double _y = 0; // Last filtered value
   bool _init = false;
   double get last => _y;
   double filter(double x, double a) {
     if (!_init) {
-      _y = x;
+      _y = x; // Prime filter with first sample
       _init = true;
     }
     _y = _y + a.clamp(0, 1) * (x - _y);
@@ -75,17 +87,18 @@ class _LowPass {
 }
 
 class Dab {
-  final ui.Offset center;
-  final double radius;
-  final double alpha;
+  final ui.Offset center; // Center position of the stamp
+  final double radius; // Radius in pixels
+  final double alpha; // Final dab opacity (0..1)
   const Dab(this.center, this.radius, this.alpha);
 }
 
 class StrokeLayer {
+  // Parallel lists used by drawAtlas for batching many quads in one call.
   final List<ui.RSTransform> _xforms = [];
   final List<ui.Rect> _src = [];
   final List<ui.Color> _colors = [];
-  ui.Image? sprite; // soft disc
+  ui.Image? sprite; // Soft round brush sprite (generated lazily)
 
   Future<void> ensureSprite(double hardness) async {
     if (sprite != null) return;
@@ -100,7 +113,8 @@ class StrokeLayer {
 
   void add(Dab d) {
     final src = ui.Rect.fromLTWH(0, 0, 128, 128);
-    final scale = (d.radius / 64.0) * 2.0;
+    final scale =
+        (d.radius / 64.0) * 2.0; // Convert radius back to sprite scale
     final xf = ui.RSTransform.fromComponents(
       rotation: 0,
       scale: scale,
@@ -130,16 +144,18 @@ class StrokeLayer {
 
 class BrushEngine extends ChangeNotifier {
   final BrushParams params;
-  final StrokeLayer live = StrokeLayer();
-  final OneEuro _fx = OneEuro();
-  final OneEuro _fy = OneEuro();
-  final OneEuro _fp = OneEuro()..beta = 0.02;
-  double? _lastX, _lastY;
+  final StrokeLayer live = StrokeLayer(); // Holds dabs for active stroke
+  final OneEuro _fx = OneEuro(); // X smoothing
+  final OneEuro _fy = OneEuro(); // Y smoothing
+  final OneEuro _fp = OneEuro()
+    ..beta = 0.02; // Pressure smoothing (slightly faster)
+  double? _lastX, _lastY; // Last dab center to enforce spacing
 
   BrushEngine(this.params);
 
   Future<void> prepare() => live.ensureSprite(params.hardness);
 
+  // Reset state at stroke start.
   void resetStroke() {
     _fx.reset();
     _fy.reset();
@@ -149,6 +165,7 @@ class BrushEngine extends ChangeNotifier {
     live.clear();
   }
 
+  // Convert filtered points to dabs with consistent spacing.
   Iterable<Dab> _emit(Iterable<InputPoint> raw) sync* {
     for (final p in raw) {
       final sx = _fx.filter(p.x, p.tMs);
@@ -162,7 +179,7 @@ class BrushEngine extends ChangeNotifier {
         1,
       );
       final shouldEmit = () {
-        if (_lastX == null) return true;
+        if (_lastX == null) return true; // Always emit first dab
         final dx = sx - _lastX!, dy = sy - _lastY!;
         return (dx * dx + dy * dy) >= spacingPx * spacingPx;
       }();
@@ -174,6 +191,8 @@ class BrushEngine extends ChangeNotifier {
     }
   }
 
+  // Add new raw points (e.g., from pointer events). Notifies listeners so the
+  // CustomPainter can repaint the live stroke.
   void addPoints(List<InputPoint> pts) {
     for (final d in _emit(pts)) {
       live.add(d);
@@ -183,6 +202,7 @@ class BrushEngine extends ChangeNotifier {
 }
 
 Future<ui.Image> _makeSoftDiscSprite(int size, double hardness) async {
+  // Prebuild a radial gradient disc once; reused for all dabs.
   final rec = ui.PictureRecorder();
   final c = ui.Canvas(
     rec,

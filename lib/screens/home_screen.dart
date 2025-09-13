@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'session_screen.dart';
 
-// TODO: Deprecated by new search/practice/review flow. Remove once pose
-// sequence prototype logic is migrated or replaced.
+// home_screen.dart (LEGACY)
+// ------------------------
+// This screen is deprecated in favor of the newer reference search -> practice
+// -> review flow. It is kept temporarily while the older timed sequence code
+// is still accessible. Safe to remove once history + practice flow fully cover
+// user needs.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
