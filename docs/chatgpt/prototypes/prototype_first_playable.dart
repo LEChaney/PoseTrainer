@@ -7,6 +7,7 @@
 ///
 /// WARNING: Reference-only snapshot. Not integrated with production app structure.
 /// Remove any unused portions or migrate into services before real adoption.
+library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -223,7 +224,7 @@ class StrokeLayer {
     );
     _xforms.add(xf);
     _src.add(src);
-    _colors.add(Colors.white.withOpacity(d.alpha));
+    _colors.add(Colors.white.withValues(alpha: d.alpha));
   }
 
   void draw(Canvas c) {
@@ -926,7 +927,7 @@ class _OverlayPainter extends CustomPainter {
       img.width.toDouble(),
       img.height.toDouble(),
     );
-    final p = Paint()..color = Colors.white.withOpacity(opacity);
+    final p = Paint()..color = Colors.white.withValues(alpha: opacity);
     c.saveLayer(dst, p);
     c.drawImageRect(img, src, dst, Paint());
     c.restore();
@@ -964,7 +965,7 @@ class HistoryScreen extends StatelessWidget {
             )
           : ListView.separated(
               itemCount: kHistory.length,
-              separatorBuilder: (_, __) =>
+              separatorBuilder: (_, _) =>
                   const Divider(color: Colors.white12, height: 1),
               itemBuilder: (_, i) {
                 final s = kHistory[i];
@@ -996,7 +997,11 @@ Future<ui.Image> _makeSoftDiscSprite(int size, double hardness) async {
   final center = Offset(size / 2, size / 2);
   final r = size / 2.0;
   final stops = [0.0, (hardness.clamp(0.0, 1.0) * 0.85), 1.0];
-  final colors = [Colors.white, Colors.white, Colors.white.withOpacity(0.0)];
+  final colors = [
+    Colors.white,
+    Colors.white,
+    Colors.white.withValues(alpha: 0.0),
+  ];
   final shader = ui.Gradient.radial(center, r, colors, stops, TileMode.clamp);
   final p = Paint()..shader = shader;
   c.drawCircle(center, r, p);

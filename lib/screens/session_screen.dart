@@ -5,6 +5,8 @@ import '../services/pose_sequence_service.dart';
 import '../services/timer_service.dart';
 import '../models/pose.dart';
 
+// TODO: Legacy timed pose sequence screen. Keep temporarily until new timed
+// practice integrates with reference-driven sessions.
 class SessionScreen extends StatefulWidget {
   const SessionScreen({super.key});
 

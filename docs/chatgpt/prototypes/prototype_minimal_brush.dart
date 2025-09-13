@@ -14,6 +14,7 @@
 ///
 /// To run standalone, you could copy into a `bin/` Dart/Flutter project main or
 /// temporarily replace your `lib/main.dart` while experimenting.
+library;
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -194,7 +195,7 @@ class StrokeLayer {
     );
     _xforms.add(xf);
     _src.add(src);
-    _colors.add(Colors.white.withOpacity(d.alpha));
+    _colors.add(Colors.white.withValues(alpha: d.alpha));
   }
 
   void draw(Canvas c) {
@@ -391,7 +392,11 @@ Future<ui.Image> _makeSoftDiscSprite(int size, double hardness) async {
   final center = Offset(size / 2, size / 2);
   final r = size / 2.0;
   final stops = [0.0, (hardness.clamp(0.0, 1.0) * 0.85), 1.0];
-  final colors = [Colors.white, Colors.white, Colors.white.withOpacity(0.0)];
+  final colors = [
+    Colors.white,
+    Colors.white,
+    Colors.white.withValues(alpha: 0.0),
+  ];
   final shader = ui.Gradient.radial(center, r, colors, stops, TileMode.clamp);
   final p = Paint()..shader = shader;
   c.drawCircle(center, r, p);

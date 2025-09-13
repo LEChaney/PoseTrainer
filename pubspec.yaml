@@ -35,6 +35,8 @@ dependencies:
   provider: ^6.0.5
   # Image caching (future: remote reference images)
   cached_network_image: ^3.4.1
+  # HTTP client for e621 tag and image fetches
+  http: ^1.2.2
   # Cupertino icons
   cupertino_icons: ^1.0.8
 
@@ -47,7 +49,7 @@ dev_dependencies:
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

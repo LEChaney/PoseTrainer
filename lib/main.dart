@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import 'models/pose.dart';
 import 'services/timer_service.dart';
 import 'services/pose_sequence_service.dart';
-import 'screens/home_screen.dart';
+import 'services/reference_search_service.dart';
+import 'services/session_service.dart';
+import 'screens/search_screen.dart';
 
 void main() {
   runApp(const PoseCoachApp());
@@ -21,6 +23,8 @@ class PoseCoachApp extends StatelessWidget {
           create: (_) =>
               PoseSequenceService(poses: Pose.sampleSet(), cycles: 1),
         ),
+        ChangeNotifierProvider(create: (_) => ReferenceSearchService()),
+        ChangeNotifierProvider(create: (_) => SessionService()),
       ],
       child: MaterialApp(
         title: 'PoseCoach',
@@ -28,7 +32,7 @@ class PoseCoachApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
           useMaterial3: true,
         ),
-        home: const HomeScreen(),
+        home: const SearchScreen(),
       ),
     );
   }

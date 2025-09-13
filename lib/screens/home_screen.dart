@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'session_screen.dart';
 
+// TODO: Deprecated by new search/practice/review flow. Remove once pose
+// sequence prototype logic is migrated or replaced.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
