@@ -34,22 +34,6 @@ migrate_working_dir/
 /build/
 /coverage/
 
-# Generated iOS Flutter intermediates (keep ios/ itself in repo)
-ios/Flutter/Generated.xcconfig
-ios/Flutter/flutter_export_environment.sh
-ios/Flutter/ephemeral/
-
-# Local Android config & build caches (keep android/ itself in repo)
-android/local.properties
-android/key.properties
-android/.gradle/
-android/app/*.keystore
-android/app/*.jks
-
-# Gradle / Kotlin build cache (top-level)
-.gradle/
-gradle-wrapper.jar
-
 # Misc platform specific
 Thumbs.db
 
