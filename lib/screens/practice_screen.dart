@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/scheduler.dart';
@@ -39,6 +40,7 @@ class _PracticeScreenState extends State<PracticeScreen>
   final List<InputPoint> _pending = [];
   late final Ticker _ticker;
   bool _handedOff = false; // Becomes true once we pass _base to ReviewScreen.
+  FitMode _fitMode = FitMode.cover; // default preserves full image without crop
 
   // --- Lifecycle -----------------------------------------------------------
 
@@ -153,6 +155,18 @@ class _PracticeScreenState extends State<PracticeScreen>
   AppBar _buildAppBar() => AppBar(
     title: const Text('Practice'),
     actions: [
+      // Toggle between letterboxed contain (no crop) and cover (fills space, crops edges)
+      IconButton(
+        icon: Icon(_fitMode == FitMode.contain ? Icons.crop_free : Icons.crop),
+        tooltip: _fitMode == FitMode.contain
+            ? 'Use full space (Cover)'
+            : 'Preserve whole image (Contain)',
+        onPressed: () => setState(() {
+          _fitMode = _fitMode == FitMode.contain
+              ? FitMode.cover
+              : FitMode.contain;
+        }),
+      ),
       IconButton(
         icon: const Icon(Icons.check),
         onPressed: _finish,
@@ -175,6 +189,7 @@ class _PracticeScreenState extends State<PracticeScreen>
         nowMs: _nowMs,
         commitStroke: _commitStroke,
         base: _base,
+        fitMode: _fitMode,
       );
       Widget layout = isWide
           ? Row(
@@ -247,6 +262,7 @@ class _CanvasArea extends StatelessWidget {
   final int Function() nowMs;
   final Future<void> Function() commitStroke;
   final ui.Image? base;
+  final FitMode fitMode;
   // We draw and store strokes in the intrinsic backing image coordinate space
   // (base.width x base.height). When the on-screen canvas is a different size
   // we simply scale the entire paint operation. This keeps stroke positions
@@ -260,6 +276,7 @@ class _CanvasArea extends StatelessWidget {
     required this.nowMs,
     required this.commitStroke,
     required this.base,
+    required this.fitMode,
   });
   @override
   Widget build(BuildContext context) {
@@ -277,7 +294,7 @@ class _CanvasArea extends StatelessWidget {
           child: AnimatedBuilder(
             animation: engine,
             builder: (_, _) => CustomPaint(
-              painter: _PracticePainter(base, engine.live),
+              painter: _PracticePainter(base, engine.live, fitMode: fitMode),
               size: size,
             ),
           ),
@@ -289,12 +306,38 @@ class _CanvasArea extends StatelessWidget {
   void _addPoint(PointerEvent e, Size widgetSize, {bool reset = false}) {
     if (reset) engine.resetStroke();
     if (base == null) return;
-    // Map pointer coords (widget space) to backing image space. We stretch the
-    // base to fill the widget (maintaining aspect ratio only if widget ratio
-    // matches base). For now assume uniform scale determined by separate x/y.
-    final sx = e.localPosition.dx * (base!.width / widgetSize.width);
-    final sy = e.localPosition.dy * (base!.height / widgetSize.height);
-    pending.add(InputPoint(sx, sy, pressure(e), nowMs()));
+    // Aspect-preserving transform. Two modes:
+    // contain -> letterbox (no crop, possibly unused bars, skip points outside)
+    // cover   -> fills widget (may crop image, no unused bars)
+    final iw = base!.width.toDouble();
+    final ih = base!.height.toDouble();
+    final sx = widgetSize.width / iw;
+    final sy = widgetSize.height / ih;
+    final bool cover = fitMode == FitMode.cover;
+    final scale = cover ? math.max(sx, sy) : math.min(sx, sy);
+    final drawW = iw * scale;
+    final drawH = ih * scale;
+    final dx = (widgetSize.width - drawW) / 2;
+    final dy = (widgetSize.height - drawH) / 2;
+    final local = e.localPosition;
+    // Contain: ignore pointer in letterbox bars. Cover: always map (bars negative or zero).
+    if (!cover) {
+      if (local.dx < dx ||
+          local.dx > dx + drawW ||
+          local.dy < dy ||
+          local.dy > dy + drawH) {
+        return;
+      }
+    }
+    // In cover mode some of the image is outside the widget. Clamp to bounds
+    // so strokes at extreme edges do not wrap. (Could optionally allow out-of-range.)
+    double imgX = (local.dx - dx) / scale;
+    double imgY = (local.dy - dy) / scale;
+    if (cover) {
+      imgX = imgX.clamp(0.0, iw - 0.0001);
+      imgY = imgY.clamp(0.0, ih - 0.0001);
+    }
+    pending.add(InputPoint(imgX, imgY, pressure(e), nowMs()));
   }
 }
 
@@ -400,7 +443,8 @@ class _BrushSlidersState extends State<_BrushSliders> {
 class _PracticePainter extends CustomPainter {
   final ui.Image? base;
   final StrokeLayer live;
-  _PracticePainter(this.base, this.live);
+  _PracticePainter(this.base, this.live, {this.fitMode = FitMode.contain});
+  final FitMode fitMode;
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
     // BRUSH RENDERING NOTES (post-gap & snap fixes):
@@ -416,23 +460,32 @@ class _PracticePainter extends CustomPainter {
       Offset.zero & size,
       ui.Paint()..color = const Color(0xFF111115),
     );
-    if (base != null) {
-      // Uniform scale from image space to current size.
-      final sx = size.width / base!.width;
-      final sy = size.height / base!.height;
-      canvas.save();
-      canvas.scale(sx, sy);
-      // Draw committed in image space.
-      canvas.drawImage(base!, ui.Offset.zero, ui.Paint());
-      // Draw live dabs (already in image space coordinates) so no snap occurs.
+    if (base == null) {
       live.draw(canvas);
-      canvas.restore();
-    } else {
-      // No base yet: draw live directly (already in widget space in this edge case).
-      live.draw(canvas);
+      return;
     }
+    final iw = base!.width.toDouble();
+    final ih = base!.height.toDouble();
+    final sx = size.width / iw;
+    final sy = size.height / ih;
+    final scale = fitMode == FitMode.cover
+        ? math.max(sx, sy)
+        : math.min(sx, sy);
+    final drawW = iw * scale;
+    final drawH = ih * scale;
+    final dx = (size.width - drawW) / 2;
+    final dy = (size.height - drawH) / 2;
+    canvas.save();
+    canvas.translate(dx, dy);
+    canvas.scale(scale, scale);
+    canvas.drawImage(base!, ui.Offset.zero, ui.Paint());
+    live.draw(canvas);
+    canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant _PracticePainter old) => true;
 }
+
+// Fit mode for drawing surface scaling.
+enum FitMode { contain, cover }

@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 // review_screen.dart
@@ -214,28 +215,36 @@ class _OverlayPainter extends CustomPainter {
   _OverlayPainter(this.refImg, this.drawImg, this.refOpacity, this.drawOpacity);
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
-    // WHY separate fit calls: each image could differ in aspect ratio; centering
-    // them independently avoids distortion and maintains their original scale
-    // relationship (we do not force uniform scaling based on only one image).
-    final refRect = _fit(size, refImg);
-    final drawRect = _fit(size, drawImg);
-    // Order: reference first then drawing so user's strokes sit "on top" for
-    // visual emphasis.
-    _draw(canvas, refImg, refRect, refOpacity);
-    _draw(canvas, drawImg, drawRect, drawOpacity);
+    // Unified scaling: pick a scale that fits BOTH images entirely while
+    // preserving each intrinsic aspect ratio, then center them. This keeps
+    // their relative proportions consistent (no stretching of the drawing
+    // relative to the reference).
+    // (Intrinsic sizes accessed via image.width/height in rectFor; no locals needed.)
+    // We fit the bounding box that must contain both; simplest is to compute
+    // individual uniform scales then take the min.
+    double scaleFor(ui.Image img) {
+      final iw = img.width.toDouble(), ih = img.height.toDouble();
+      final sx = size.width / iw;
+      final sy = size.height / ih;
+      return math.min(sx, sy);
+    }
+
+    final sRef = scaleFor(refImg);
+    final sDraw = scaleFor(drawImg);
+    final s = math.min(sRef, sDraw); // ensures both fit simultaneously
+    Rect rectFor(ui.Image img) {
+      final w = img.width * s;
+      final h = img.height * s;
+      return Rect.fromLTWH((size.width - w) / 2, (size.height - h) / 2, w, h);
+    }
+
+    final refRect = rectFor(refImg);
+    final drawRect = rectFor(drawImg);
+    _draw(canvas, refImg, refRect, refOpacity); // reference bottom
+    _draw(canvas, drawImg, drawRect, drawOpacity); // drawing top
   }
 
-  Rect _fit(ui.Size view, ui.Image img) {
-    final iw = img.width.toDouble(), ih = img.height.toDouble();
-    final scale = (view.width / iw).clamp(0.0, double.infinity);
-    final scaledH = ih * scale;
-    double s = scale;
-    if (scaledH > view.height) {
-      s = view.height / ih;
-    }
-    final w = iw * s, h = ih * s;
-    return Rect.fromLTWH((view.width - w) / 2, (view.height - h) / 2, w, h);
-  }
+  // (Legacy _fit removed after unified scaling implementation.)
 
   void _draw(ui.Canvas c, ui.Image img, Rect dst, double opacity) {
     // SaveLayer with a white color having variable alpha lets us modulate
@@ -277,28 +286,25 @@ class _UrlOverlayCompare extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (_, constraints) {
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            Opacity(
-              opacity: refOpacity,
-              child: FittedBox(
-                fit: BoxFit.contain,
-                child: Image.network(refUrl),
-              ),
-            ),
-            Opacity(
-              opacity: drawOpacity,
-              child: FittedBox(
-                fit: BoxFit.contain,
-                child: RawImage(image: drawImg),
-              ),
-            ),
-          ],
-        );
-      },
+    // We cannot know the reference intrinsic size synchronously; using two
+    // independent FittedBox instances with the same fit preserves each aspect
+    // without stretching the drawing relative to the reference. (Unified scale
+    // exactly requires both intrinsic sizes; acceptable compromise here.)
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Opacity(
+          opacity: refOpacity,
+          child: FittedBox(fit: BoxFit.contain, child: Image.network(refUrl)),
+        ),
+        Opacity(
+          opacity: drawOpacity,
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: RawImage(image: drawImg),
+          ),
+        ),
+      ],
     );
   }
 }
