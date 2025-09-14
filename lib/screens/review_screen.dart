@@ -3,13 +3,18 @@ import 'package:flutter/material.dart';
 
 // review_screen.dart
 // ------------------
-// Lets user compare their drawing with the reference.
-// Modes:
-// - Overlay (only when we have decoded reference `ui.Image`). Adjustable
-//   opacity for both reference and drawing.
-// - Side-by-side (always available). Used automatically for web fallback or
-//   when reference decoding failed.
-// CustomPainter (`_OverlayPainter`) handles scale-to-fit logic for overlay.
+// WHY this screen exists:
+// After a timed practice stroke session the user needs rapid visual feedback: Did my proportions and gesture align with the reference? We provide two visual comparison modes while keeping logic minimal and cross‑platform safe.
+//   1. Overlay (alpha blend) – best for proportion tracing, only possible when we already decoded the reference into a ui.Image (native platforms; web if CORS allowed and decode succeeded).
+//   2. Side‑by‑side – universal fallback (always works, including web when we only have a network URL and cannot access pixel bytes for overlay).
+// DESIGN CONSTRAINTS:
+// - We NEVER attempt to decode the image here; decoding responsibility lives upstream (search/practice flow) to keep this screen pure display.
+// - If reference decoding failed or we are on web with URL‑only access, overlay is disabled and UI hides overlay‑specific controls to reduce confusion.
+// - Painter does scaling (contain) so both images retain aspect ratio without distortion.
+// READABILITY STRATEGY:
+// - Split UI: controls row builder vs comparison area builder.
+// - Early return inside comparison builder for fallback path.
+// - Small focused stateless widgets with descriptive names.
 
 class ReviewScreen extends StatefulWidget {
   final ui.Image? reference; // may be null when only URL available (web)
@@ -38,47 +43,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
       appBar: AppBar(title: const Text('Review')),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: true, label: Text('Overlay')),
-                    ButtonSegment(value: false, label: Text('Side-by-side')),
-                  ],
-                  selected: {overlay},
-                  onSelectionChanged: (v) => setState(() => overlay = v.first),
-                ),
-                const Spacer(),
-                const Text('Ref'),
-                SizedBox(
-                  width: 120,
-                  child: Slider(
-                    value: refOpacity,
-                    min: 0,
-                    max: 1,
-                    onChanged: (v) => setState(() => refOpacity = v),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Text('Draw'),
-                SizedBox(
-                  width: 120,
-                  child: Slider(
-                    value: drawOpacity,
-                    min: 0,
-                    max: 1,
-                    onChanged: (v) => setState(() => drawOpacity = v),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          Padding(padding: const EdgeInsets.all(8), child: _buildControls()),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(8),
-              child: _buildBody(),
+              child: _buildComparison(),
             ),
           ),
         ],
@@ -86,7 +55,50 @@ class _ReviewScreenState extends State<ReviewScreen> {
     );
   }
 
-  Widget _buildBody() {
+  // --- UI Helpers -----------------------------------------------------------
+
+  Widget _buildControls() {
+    final hasRef = widget.reference != null;
+    if (!hasRef && overlay) {
+      // Defensive: if user navigated here with overlay true but we only have URL fallback,
+      // force side-by-side so UI state matches capability.
+      overlay =
+          false; // safe synchronous mutation inside build prior to returning.
+    }
+    return Row(
+      children: [
+        if (hasRef)
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: true, label: Text('Overlay')),
+              ButtonSegment(value: false, label: Text('Side-by-side')),
+            ],
+            selected: {overlay},
+            onSelectionChanged: (v) => setState(() => overlay = v.first),
+          )
+        else
+          const Text(
+            'Side-by-side (overlay unavailable)',
+            style: TextStyle(fontSize: 12),
+          ),
+        const Spacer(),
+        if (hasRef)
+          _OpacitySlider(
+            label: 'Ref',
+            value: refOpacity,
+            onChanged: (v) => setState(() => refOpacity = v),
+          ),
+        if (hasRef) const SizedBox(width: 12),
+        _OpacitySlider(
+          label: 'Draw',
+          value: drawOpacity,
+          onChanged: (v) => setState(() => drawOpacity = v),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildComparison() {
     // If no decoded reference image, force side-by-side with network widget (web fallback)
     if (widget.reference == null) {
       return _SideBySideFallback(
@@ -116,9 +128,9 @@ class _SideBySideCompare extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: _Fitted(img: refImg, opacity: 1)),
+        Expanded(child: _FittedImage(img: refImg, opacity: 1)),
         const VerticalDivider(width: 16, thickness: 1),
-        Expanded(child: _Fitted(img: drawImg, opacity: 1)),
+        Expanded(child: _FittedImage(img: drawImg, opacity: 1)),
       ],
     );
   }
@@ -142,10 +154,11 @@ class _OverlayCompare extends StatelessWidget {
   }
 }
 
-class _Fitted extends StatelessWidget {
+// Displays a decoded ui.Image scaled to fit while preserving aspect ratio with optional opacity.
+class _FittedImage extends StatelessWidget {
   final ui.Image img;
   final double opacity;
-  const _Fitted({required this.img, required this.opacity});
+  const _FittedImage({required this.img, required this.opacity});
   @override
   Widget build(BuildContext context) {
     return FittedBox(
@@ -158,14 +171,44 @@ class _Fitted extends StatelessWidget {
   }
 }
 
+// Compact labeled opacity slider used for both reference & drawing channels.
+class _OpacitySlider extends StatelessWidget {
+  final String label;
+  final double value;
+  final ValueChanged<double> onChanged;
+  const _OpacitySlider({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label),
+        SizedBox(
+          width: 120,
+          child: Slider(value: value, min: 0, max: 1, onChanged: onChanged),
+        ),
+      ],
+    );
+  }
+}
+
 class _OverlayPainter extends CustomPainter {
   final ui.Image refImg, drawImg;
   final double refOpacity, drawOpacity;
   _OverlayPainter(this.refImg, this.drawImg, this.refOpacity, this.drawOpacity);
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
+    // WHY separate fit calls: each image could differ in aspect ratio; centering
+    // them independently avoids distortion and maintains their original scale
+    // relationship (we do not force uniform scaling based on only one image).
     final refRect = _fit(size, refImg);
     final drawRect = _fit(size, drawImg);
+    // Order: reference first then drawing so user's strokes sit "on top" for
+    // visual emphasis.
     _draw(canvas, refImg, refRect, refOpacity);
     _draw(canvas, drawImg, drawRect, drawOpacity);
   }
@@ -183,6 +226,9 @@ class _OverlayPainter extends CustomPainter {
   }
 
   void _draw(ui.Canvas c, ui.Image img, Rect dst, double opacity) {
+    // SaveLayer with a white color having variable alpha lets us modulate
+    // opacity without allocating a new image or shader: GPU blends during
+    // layer compositing.
     final src = Rect.fromLTWH(
       0,
       0,

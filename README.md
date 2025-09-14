@@ -1,7 +1,7 @@
 PoseCoach
 =========
 
-Timed pose / figure drawing practice app focused on: low-latency pencil‑like brushing, tag‑driven reference selection, and clear post‑session review (side‑by‑side + overlay). Built Flutter‑first for iOS, Android, desktop, and web using Impeller.
+Figure drawing practice app focused on: low-latency pencil‑like brushing, tag‑driven reference selection, and clear post‑session review (side‑by‑side + overlay). Built Flutter‑first for iOS, Android, desktop, and web using Impeller.
 
 Why It Exists
 -------------
@@ -12,8 +12,8 @@ Core (Stable) Goals
 1. Smooth single soft round brush (drawAtlas batching + One‑Euro smoothing).
 2. e621 tag search (safe rating default) → choose reference.
 3. Practice canvas: live stroke layer + committed layer (merge on stroke end).
-4. Save paired reference + drawing with minimal metadata.
-5. Review: overlay (independent opacities) & side‑by‑side.
+4. Save paired reference + drawing with minimal metadata (in‑memory now; persistence later).
+5. Review: overlay (independent opacities) & side‑by‑side (web fallback when overlay unavailable due to CORS).
 6. Clean Material 3 UI, readable code, minimal dependencies.
 
 Non‑Goals (Deferred)
@@ -22,29 +22,29 @@ Advanced multibrush engines, AI coaching, cloud sync, multi‑layer compositing,
 
 Tech Overview
 -------------
-- Framework: Flutter 3.x (Impeller renderer)  
-- State: Provider + ChangeNotifier (no Bloc/Riverpod unless justified)  
-- Networking: http (descriptive User‑Agent for e621)  
-- Rendering: Canvas + drawAtlas soft disc sprite  
-- Image decode: built‑in `ui.instantiateImageCodec`  
+- Framework: Flutter 3.x (Impeller renderer)
+- State: Provider + ChangeNotifier (no Bloc/Riverpod unless justified)
+- Networking: http (descriptive User‑Agent for e621)
+- Rendering: Canvas + drawAtlas soft disc sprite
+- Image decode: built‑in `ui.instantiateImageCodec`
 
 Project Layout (High Level)
 ---------------------------
 ```
 lib/
-	main.dart                # Entry / navigation wiring
+	main.dart                  # Entry / providers / theme
 	models/
-		pose.dart              # (Sample pose/sequence model)
+		practice_session.dart    # Completed drawing + reference pairing
 	services/
-		timer_service.dart     # Duration + tick management
-		pose_sequence_service.dart # Pose sequencing logic
-		(future) brush_engine.dart  # Brush emission & smoothing service
-		(future) session_service.dart # Session store / persistence
+		reference_search_service.dart  # e621 tag search + decode
+		session_service.dart     # In-memory session history
+		brush_engine.dart        # Brush smoothing & dab batching (soft round)
 	screens/
-		home_screen.dart       # Launch / configuration
-		session_screen.dart    # Active timed session UI
-docs/chatgpt/prototypes/    # Reference-only prototypes (not imported)
-docs/                       # Design notes, tech stack discussion
+		search_screen.dart       # Tag search + reference selection
+		practice_screen.dart     # Drawing canvas
+		review_screen.dart       # Overlay / side-by-side comparison
+		history_screen.dart      # Past sessions list
+docs/                        # Design notes, conversations, prototypes
 ```
 
 Running the App
@@ -63,10 +63,7 @@ Web (development only):
 ```bash
 flutter run -d chrome
 ```
-Compare Impeller vs legacy (diagnostics):
-```bash
-flutter run --no-enable-impeller
-```
+Optional (compare without Impeller renderer): `flutter run --no-enable-impeller`
 
 Publishing for iOS from Windows
 -------------------------------
@@ -78,17 +75,12 @@ You cannot produce a signed App Store build directly on Windows. Common workflow
 5. Test with TestFlight before public release.
 For ad‑hoc local testing without the store, generate an `.ipa` on CI and install via Apple Configurator or TestFlight internal distribution.
 
-Testing
--------
-Execute all tests:
-```bash
-flutter test
-```
-Planned / important coverage areas:
-- Brush spacing & smoothing (when brush service lands)
-- TimerService tick accumulation & pause/resume
-- Pose sequencing transitions
-- Session save + review data integrity
+Testing (Planned)
+-----------------
+Initial tests will cover:
+	* Brush spacing & smoothing
+	* Session save + review data integrity (once persistence lands)
+	* Reference search parsing / filtering
 
 Reference Prototypes
 --------------------
@@ -100,4 +92,4 @@ TBD (add chosen license file before distribution).
 
 Status Note
 -----------
-This README describes stable invariants. Avoid adding speculative future plans here; keep it focused so new contributors quickly grasp the core loop.
+Legacy timed pose sequence prototype removed (simplifies code). README focuses on the active search → practice → review loop.

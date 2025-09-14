@@ -37,4 +37,13 @@ Quality:
 - Prefer readability > cleverness; remove dead prototype code when migrated.
 - Add focused tests for spacing, smoothing, session save/review when stabilizing.
 
+Readability Addendum (beginner phase):
+- Minimize nesting: prefer early returns, extract private widgets/helpers when a build method exceeds ~40 lines or has >2 nested conditionals.
+- Split long onTap / async handlers into named methods.
+- Keep widget tree vertical: one concern per widget; move complex branches into `_buildX()` helpers.
+- Temporary tutorial comments: explain why (intent) before how (mechanics); okay to be verbose now—will trim later.
+- Prefer section headers (// ---) to visually segment files: imports, models, state, build helpers.
+- Comment decision points: platform checks, error handling, image decoding rationale.
+- Avoid anonymous deeply nested closures; name them for clarity if >5 lines.
+
 Update this file only when core invariants change; keep <=50 lines.

@@ -39,45 +39,51 @@ class _PracticeScreenState extends State<PracticeScreen>
   final List<InputPoint> _pending = [];
   late final Ticker _ticker;
 
+  // --- Lifecycle -----------------------------------------------------------
+
   @override
   void initState() {
     super.initState();
     engine = BrushEngine(const BrushParams())..prepare();
-    // Default canvas size: if we have a decoded reference use its size; else fallback.
+    // Pick canvas size: use reference image dimensions if available; otherwise a square fallback.
     final w = widget.reference?.width ?? 1200;
     final h = widget.reference?.height ?? 1200;
     _initBase(w, h);
+    // Ticker drives per-frame flushing of buffered pointer points to the brush engine.
     _ticker = createTicker(_onFrame)..start();
   }
 
   Future<void> _initBase(int w, int h) async {
+    // WHY: We maintain strokes on a backing image to avoid reprocessing old dabs each frame.
     final rec = ui.PictureRecorder();
     ui.Canvas(rec, ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
     final pic = rec.endRecording();
     _base = await pic.toImage(w, h);
-    setState(() {});
+    setState(() {}); // Trigger repaint with new blank base.
   }
 
   int _nowMs() => DateTime.now().millisecondsSinceEpoch;
 
   double _pressure(dynamic e) {
+    // Normalize hardware pressure range to 0..1 (fallback 0.5 when unknown).
     if (e is PointerEvent) {
-      final min = e.pressureMin, max = e.pressureMax;
-      final denom = (max - min);
+      final denom = (e.pressureMax - e.pressureMin);
       if (denom == 0) return 0.5;
-      final v = ((e.pressure - min) / denom).clamp(0.0, 1.0);
+      final v = ((e.pressure - e.pressureMin) / denom).clamp(0.0, 1.0);
       return v.isFinite ? v : 0.5;
     }
     return 0.5;
   }
 
   void _onFrame(Duration _) {
+    // Flush buffered pointer samples into the brush engine once per frame.
     if (_pending.isEmpty) return;
     engine.addPoints(List.of(_pending));
     _pending.clear();
   }
 
   Future<void> _commitStroke() async {
+    // Merge current live stroke (dabs) onto the backing image.
     if (_base == null) return;
     final w = _base!.width, h = _base!.height;
     final rec = ui.PictureRecorder();
@@ -86,16 +92,17 @@ class _PracticeScreenState extends State<PracticeScreen>
       ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
     );
     canvas.drawImage(_base!, ui.Offset.zero, ui.Paint());
-    engine.live.draw(canvas);
+    engine.live.draw(canvas); // Composite live dabs.
     final pic = rec.endRecording();
     final merged = await pic.toImage(w, h);
-    _base!.dispose();
+    _base!.dispose(); // Free old image memory.
     _base = merged;
     engine.live.clear();
-    setState(() {});
+    setState(() {}); // Repaint with committed state.
   }
 
   Future<void> _finish() async {
+    // Finalize: commit any in-progress stroke, store session, navigate to review.
     await _commitStroke();
     if (!mounted || _base == null) return;
     if (widget.reference != null) {
@@ -127,58 +134,64 @@ class _PracticeScreenState extends State<PracticeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Practice'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.check),
-            onPressed: _finish,
-            tooltip: 'Finish & Review',
-          ),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, c) {
-          final isWide = c.maxWidth > 900;
-          final refWidget = _ReferencePanel(
-            reference: widget.reference,
-            referenceUrl: widget.referenceUrl,
-          );
-          final canvasArea = _CanvasArea(
-            engine: engine,
-            pending: _pending,
-            pressure: _pressure,
-            nowMs: _nowMs,
-            commitStroke: _commitStroke,
-            base: _base,
-          );
-          return isWide
-              ? Row(
-                  children: [
-                    SizedBox(width: c.maxWidth * 0.35, child: refWidget),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: canvasArea),
-                  ],
-                )
-              : Column(
-                  children: [
-                    SizedBox(height: c.maxHeight * 0.35, child: refWidget),
-                    const Divider(height: 1),
-                    Expanded(child: canvasArea),
-                  ],
-                );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          if (_base == null) return;
-          await _initBase(_base!.width, _base!.height);
-        },
-        label: const Text('Clear'),
-        icon: const Icon(Icons.undo),
-      ),
+      appBar: _buildAppBar(),
+      body: _buildBody(),
+      floatingActionButton: _buildClearFab(),
     );
   }
+
+  AppBar _buildAppBar() => AppBar(
+    title: const Text('Practice'),
+    actions: [
+      IconButton(
+        icon: const Icon(Icons.check),
+        onPressed: _finish,
+        tooltip: 'Finish & Review',
+      ),
+    ],
+  );
+
+  Widget _buildBody() => LayoutBuilder(
+    builder: (context, c) {
+      final isWide = c.maxWidth > 900; // Simple responsive breakpoint.
+      final referencePanel = _ReferencePanel(
+        reference: widget.reference,
+        referenceUrl: widget.referenceUrl,
+      );
+      final canvasArea = _CanvasArea(
+        engine: engine,
+        pending: _pending,
+        pressure: _pressure,
+        nowMs: _nowMs,
+        commitStroke: _commitStroke,
+        base: _base,
+      );
+      return isWide
+          ? Row(
+              children: [
+                SizedBox(width: c.maxWidth * 0.35, child: referencePanel),
+                const VerticalDivider(width: 1),
+                Expanded(child: canvasArea),
+              ],
+            )
+          : Column(
+              children: [
+                SizedBox(height: c.maxHeight * 0.35, child: referencePanel),
+                const Divider(height: 1),
+                Expanded(child: canvasArea),
+              ],
+            );
+    },
+  );
+
+  Widget _buildClearFab() => FloatingActionButton.extended(
+    onPressed: () async {
+      if (_base == null) return; // Early return reduces nesting.
+      await _initBase(_base!.width, _base!.height);
+    },
+    label: const Text('Clear'),
+    icon: const Icon(Icons.undo),
+  );
 }
 
 class _ReferencePanel extends StatelessWidget {
@@ -194,7 +207,11 @@ class _ReferencePanel extends StatelessWidget {
         child: RawImage(image: reference),
       );
     } else if (referenceUrl != null) {
-      child = Image.network(referenceUrl!, fit: BoxFit.contain);
+      child = Image.network(
+        referenceUrl!,
+        fit: BoxFit.contain,
+        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+      );
     } else {
       child = const Center(child: Text('No reference'));
     }
@@ -227,47 +244,28 @@ class _CanvasArea extends StatelessWidget {
         final size = Size(c.maxWidth, c.maxHeight);
         return Listener(
           behavior: HitTestBehavior.opaque,
-          onPointerDown: (e) {
-            engine.resetStroke();
-            pending.add(
-              InputPoint(
-                e.localPosition.dx,
-                e.localPosition.dy,
-                pressure(e),
-                nowMs(),
-              ),
-            );
-          },
-          onPointerMove: (e) {
-            pending.add(
-              InputPoint(
-                e.localPosition.dx,
-                e.localPosition.dy,
-                pressure(e),
-                nowMs(),
-              ),
-            );
-          },
+          onPointerDown: (e) => _addPoint(e, reset: true),
+          onPointerMove: (e) => _addPoint(e),
           onPointerUp: (e) async {
-            pending.add(
-              InputPoint(
-                e.localPosition.dx,
-                e.localPosition.dy,
-                pressure(e),
-                nowMs(),
-              ),
-            );
+            _addPoint(e);
             await commitStroke();
           },
           child: AnimatedBuilder(
             animation: engine,
-            builder: (context, child) => CustomPaint(
+            builder: (_, _) => CustomPaint(
               painter: _PracticePainter(base, engine.live),
               size: size,
             ),
           ),
         );
       },
+    );
+  }
+
+  void _addPoint(PointerEvent e, {bool reset = false}) {
+    if (reset) engine.resetStroke();
+    pending.add(
+      InputPoint(e.localPosition.dx, e.localPosition.dy, pressure(e), nowMs()),
     );
   }
 }
@@ -278,10 +276,12 @@ class _PracticePainter extends CustomPainter {
   _PracticePainter(this.base, this.live);
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
+    // Clear background.
     canvas.drawRect(
       Offset.zero & size,
       ui.Paint()..color = const Color(0xFF111115),
     );
+    // Draw committed strokes (scaled to current canvas size).
     if (base != null) {
       final dst = Offset.zero & size;
       final src = ui.Rect.fromLTWH(
@@ -292,6 +292,7 @@ class _PracticePainter extends CustomPainter {
       );
       canvas.drawImageRect(base!, src, dst, ui.Paint());
     }
+    // Draw in-progress (live) dabs on top.
     live.draw(canvas);
   }
 

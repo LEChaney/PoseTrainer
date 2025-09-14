@@ -13,9 +13,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 // Local project imports (grouped logically) ---------------------------------
-import 'models/pose.dart';
-import 'services/timer_service.dart';
-import 'services/pose_sequence_service.dart';
 import 'services/reference_search_service.dart';
 import 'services/session_service.dart';
 import 'screens/search_screen.dart';
@@ -39,19 +36,9 @@ class PoseCoachApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      // Each entry here creates (lazily) one shared service instance.
+      // Shared service instances (only the flows we actively use).
       providers: [
-        // Tracks elapsed time (used mainly by the legacy pose sequence screen).
-        ChangeNotifierProvider(create: (_) => TimerService()),
-        // Legacy timed pose sequence (kept while newer reference-driven flow
-        // stabilizes). Provides a rotating list of `Pose` objects.
-        ChangeNotifierProvider(
-          create: (_) =>
-              PoseSequenceService(poses: Pose.sampleSet(), cycles: 1),
-        ),
-        // Performs remote tag search + network image decoding (safe rating enforced).
         ChangeNotifierProvider(create: (_) => ReferenceSearchService()),
-        // Stores completed drawing sessions in memory (no disk persistence yet).
         ChangeNotifierProvider(create: (_) => SessionService()),
       ],
       child: MaterialApp(
