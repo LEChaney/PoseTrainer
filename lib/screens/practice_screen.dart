@@ -166,7 +166,7 @@ class _PracticeScreenState extends State<PracticeScreen>
         commitStroke: _commitStroke,
         base: _base,
       );
-      return isWide
+      Widget layout = isWide
           ? Row(
               children: [
                 SizedBox(width: c.maxWidth * 0.35, child: referencePanel),
@@ -181,6 +181,14 @@ class _PracticeScreenState extends State<PracticeScreen>
                 Expanded(child: canvasArea),
               ],
             );
+      // Overlay sliders (temporary dev UI) for size & flow.
+      layout = Stack(
+        children: [
+          layout,
+          Positioned(right: 8, top: 8, child: _BrushSliders(engine: engine)),
+        ],
+      );
+      return layout;
     },
   );
 
@@ -277,6 +285,105 @@ class _CanvasArea extends StatelessWidget {
     final sx = e.localPosition.dx * (base!.width / widgetSize.width);
     final sy = e.localPosition.dy * (base!.height / widgetSize.height);
     pending.add(InputPoint(sx, sy, pressure(e), nowMs()));
+  }
+}
+
+// Temporary development sliders for brush size & flow.
+class _BrushSliders extends StatefulWidget {
+  final BrushEngine engine;
+  const _BrushSliders({required this.engine});
+  @override
+  State<_BrushSliders> createState() => _BrushSlidersState();
+}
+
+class _BrushSlidersState extends State<_BrushSliders> {
+  double _size = 1.0; // runtime size multiplier
+  double _flow = 1.0; // runtime flow multiplier
+  double _hardness = 0.2; // initial matches params.hardness
+  @override
+  Widget build(BuildContext context) {
+    // FLOW vs OPACITY NOTE:
+    // Flow = per-dab alpha (ink laid down each stamp). Opacity (if added
+    // later) would be a *cap* on cumulative stroke buildup. For a sketch
+    // brush we only expose flow so light pressure yields faint marks but
+    // repeated passes build darker tone.
+    return Material(
+      elevation: 4,
+      borderRadius: BorderRadius.circular(8),
+      color: Colors.black54,
+      child: Container(
+        width: 180,
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Brush', style: TextStyle(color: Colors.white70)),
+            _buildSlider(
+              label: 'Size',
+              value: _size,
+              onChanged: (v) {
+                setState(() => _size = v);
+                widget.engine.setSizeScale(v);
+              },
+              min: 0.3,
+              max: 3.0,
+            ),
+            _buildSlider(
+              label: 'Flow',
+              value: _flow,
+              onChanged: (v) {
+                setState(() => _flow = v);
+                widget.engine.setFlowScale(v);
+              },
+              min: 0.2,
+              max: 2.0,
+            ),
+            _buildSlider(
+              label: 'Hardness',
+              value: _hardness,
+              onChanged: (v) {
+                setState(() => _hardness = v);
+                widget.engine.setHardness(v);
+              },
+              min: 0.0,
+              max: 1.0,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSlider({
+    required String label,
+    required double value,
+    required ValueChanged<double> onChanged,
+    required double min,
+    required double max,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white)),
+            Text(
+              value.toStringAsFixed(2),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+        Slider(
+          value: value,
+          onChanged: onChanged,
+          min: min,
+          max: max,
+          divisions: 100,
+        ),
+      ],
+    );
   }
 }
 

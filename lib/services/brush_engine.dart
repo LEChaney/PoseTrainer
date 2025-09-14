@@ -14,22 +14,74 @@ import 'package:flutter/foundation.dart';
 // Keeping this minimal helps maintain responsiveness and clarity.
 
 class BrushParams {
-  final double sizePx; // Base brush diameter in logical pixels
-  final double spacing; // Dab spacing relative to diameter (smaller => denser)
-  final double flow; // Base ink per dab (0..1)
-  final double hardness; // Edge softness (1 = harder edge)
-  final double opacity; // Overall stroke opacity multiplier
-  final double pressureSize; // How strongly pressure changes size
-  final double pressureFlow; // How strongly pressure changes flow
+  // Loose Sketch Brush (SAI-like) Parameter Design:
+  // - Early size growth (sizeGamma 0.6) so light pressure already yields a
+  //   readable line width, enabling quick gesture marks without pressing hard.
+  // - Min size 5% for tapered starts/ends (keeps strokes lively).
+  // - Flow reaches target before full pressure (maxFlowPressure 0.85) so mid
+  //   pressure feels nearly opaque; high pressure adds only subtle weight.
+  // - minFlow small but non-zero to avoid completely invisible feathering.
+  // - Low hardness => slight halo softening; will tighten for lineart brush.
+  // Core size / spacing
+  final double sizePx; // Base brush diameter at high pressure
+  final double spacing; // Dab spacing as fraction of diameter
+
+  // Opacity (flow) modeling
+  final double flow; // Target (max) per-dab flow at/after maxFlowPressure
+  final double minFlow; // Flow at zero pressure (sketch taper transparency)
+  final double
+  maxFlowPressure; // Pressure level where "flow" reaches target ( <1 => earlier saturation )
+
+  // Size taper modeling
+  final double minSizePct; // Diameter fraction at zero pressure (0.05 => 5%)
+  final double sizeGamma; // <1 => faster early growth (SAI-like)
+  final double flowGamma; // Flow response curve shaping
+
+  // Edge softness
+  final double hardness; // 0 soft halo, 1 hard edge
+
+  // Global multiplier
+  final double opacity; // Overall stroke opacity cap
+
   const BrushParams({
-    this.sizePx = 18,
-    this.spacing = 0.18, // relaxed for analytic circles (less overdraw)
-    this.flow = 0.7,
-    this.hardness = 0.8,
+    // Loose construction sketch defaults (SAI-like)
+    this.sizePx = 10,
+    this.spacing = 0.18,
+    this.flow = 0.65,
+    this.minFlow = 0.05,
+    this.maxFlowPressure = 0.85,
+    this.minSizePct = 0.05,
+    this.sizeGamma = 0.6,
+    this.flowGamma = 1.0,
+    this.hardness = 0.2,
     this.opacity = 1.0,
-    this.pressureSize = 0.9,
-    this.pressureFlow = 0.7,
   });
+
+  BrushParams copyWith({
+    double? sizePx,
+    double? spacing,
+    double? flow,
+    double? minFlow,
+    double? maxFlowPressure,
+    double? minSizePct,
+    double? sizeGamma,
+    double? flowGamma,
+    double? hardness,
+    double? opacity,
+  }) {
+    return BrushParams(
+      sizePx: sizePx ?? this.sizePx,
+      spacing: spacing ?? this.spacing,
+      flow: flow ?? this.flow,
+      minFlow: minFlow ?? this.minFlow,
+      maxFlowPressure: maxFlowPressure ?? this.maxFlowPressure,
+      minSizePct: minSizePct ?? this.minSizePct,
+      sizeGamma: sizeGamma ?? this.sizeGamma,
+      flowGamma: flowGamma ?? this.flowGamma,
+      hardness: hardness ?? this.hardness,
+      opacity: opacity ?? this.opacity,
+    );
+  }
 }
 
 class InputPoint {
@@ -107,6 +159,10 @@ class StrokeLayer {
     _hardness = hardness.clamp(0, 1);
   }
 
+  void setHardness(double h) {
+    _hardness = h.clamp(0, 1);
+  }
+
   void clear() => _dabs.clear();
 
   void add(Dab d) => _dabs.add(d);
@@ -164,6 +220,26 @@ class BrushEngine extends ChangeNotifier {
 
   BrushEngine(this.params);
 
+  // Runtime multipliers (temporary before full preset UI). These *only*
+  // scale size and flow curves; base param object stays immutable.
+  double _runtimeSizeScale = 1.0; // 1.0 => use params.sizePx
+  double _runtimeFlowScale = 1.0; // 1.0 => use computed flow as-is
+
+  void setSizeScale(double v) {
+    _runtimeSizeScale = v.clamp(0.1, 5.0);
+    notifyListeners();
+  }
+
+  void setFlowScale(double v) {
+    _runtimeFlowScale = v.clamp(0.1, 3.0);
+    notifyListeners();
+  }
+
+  void setHardness(double v) {
+    live.setHardness(v);
+    notifyListeners();
+  }
+
   Future<void> prepare() => live.ensureSprite(params.hardness);
 
   // Reset state at stroke start.
@@ -183,13 +259,23 @@ class BrushEngine extends ChangeNotifier {
       final sx = _fx.filter(p.x, p.tMs);
       final sy = _fy.filter(p.y, p.tMs);
       final sp = _fp.filter(p.pressure.clamp(0, 1), p.tMs).clamp(0, 1);
+      // Size pressure curve (gamma <1 => aggressive early growth)
+      final sizeCurve = math.pow(sp, params.sizeGamma).toDouble();
       final diameter =
-          params.sizePx * (1 + params.pressureSize * (sp - 0.5) * 2);
+          (params.sizePx * _runtimeSizeScale) *
+          (params.minSizePct + (1 - params.minSizePct) * sizeCurve);
       final spacingPx = (params.spacing.clamp(0.05, 1.0)) * diameter;
-      final flow = (params.flow + params.pressureFlow * (sp - 0.5) * 2).clamp(
-        0,
-        1,
-      );
+      // Flow (density) curve: normalize pressure by maxFlowPressure then apply gamma
+      final flowNorm = (sp / params.maxFlowPressure).clamp(0.0, 1.0);
+      final flowCurve = math.pow(flowNorm, params.flowGamma).toDouble();
+      final baseFlow =
+          (params.minFlow + (params.flow - params.minFlow) * flowCurve).clamp(
+            0.0,
+            1.0,
+          );
+      final flow =
+          (params.minFlow + (baseFlow - params.minFlow) * _runtimeFlowScale)
+              .clamp(0.0, 1.0);
 
       // First dab: always emit at filtered position.
       if (_lastX == null) {
