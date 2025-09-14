@@ -38,6 +38,7 @@ class _PracticeScreenState extends State<PracticeScreen>
   ui.Image? _base; // committed strokes
   final List<InputPoint> _pending = [];
   late final Ticker _ticker;
+  bool _handedOff = false; // Becomes true once we pass _base to ReviewScreen.
 
   // --- Lifecycle -----------------------------------------------------------
 
@@ -112,6 +113,11 @@ class _PracticeScreenState extends State<PracticeScreen>
         _base!,
       );
     }
+    // We are about to transfer ownership of _base to the next screen. We must
+    // NOT dispose it in dispose(), otherwise the ReviewScreen's painters will
+    // attempt to draw a disposed image causing the drawImage/assert failure
+    // observed in overlay mode.
+    _handedOff = true;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => ReviewScreen(
@@ -127,7 +133,11 @@ class _PracticeScreenState extends State<PracticeScreen>
   @override
   void dispose() {
     _ticker.dispose();
-    _base?.dispose();
+    // Dispose only if we still own the backing image. After navigation to
+    // ReviewScreen the image is displayed there and must remain valid.
+    if (!_handedOff) {
+      _base?.dispose();
+    }
     super.dispose();
   }
 
