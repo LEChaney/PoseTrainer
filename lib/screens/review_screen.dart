@@ -58,16 +58,17 @@ class _ReviewScreenState extends State<ReviewScreen> {
   // --- UI Helpers -----------------------------------------------------------
 
   Widget _buildControls() {
-    final hasRef = widget.reference != null;
-    if (!hasRef && overlay) {
-      // Defensive: if user navigated here with overlay true but we only have URL fallback,
-      // force side-by-side so UI state matches capability.
-      overlay =
-          false; // safe synchronous mutation inside build prior to returning.
+    final hasDecodedRef = widget.reference != null;
+    final hasUrlRef = widget.referenceUrl != null;
+    final overlayCapable =
+        hasDecodedRef ||
+        hasUrlRef; // new: URL-only overlay allowed via stacking widgets
+    if (!overlayCapable && overlay) {
+      overlay = false; // force side-by-side if neither available
     }
     return Row(
       children: [
-        if (hasRef)
+        if (overlayCapable)
           SegmentedButton<bool>(
             segments: const [
               ButtonSegment(value: true, label: Text('Overlay')),
@@ -77,18 +78,15 @@ class _ReviewScreenState extends State<ReviewScreen> {
             onSelectionChanged: (v) => setState(() => overlay = v.first),
           )
         else
-          const Text(
-            'Side-by-side (overlay unavailable)',
-            style: TextStyle(fontSize: 12),
-          ),
+          const Text('Side-by-side only', style: TextStyle(fontSize: 12)),
         const Spacer(),
-        if (hasRef)
+        if (overlayCapable)
           _OpacitySlider(
             label: 'Ref',
             value: refOpacity,
             onChanged: (v) => setState(() => refOpacity = v),
           ),
-        if (hasRef) const SizedBox(width: 12),
+        if (overlayCapable) const SizedBox(width: 12),
         _OpacitySlider(
           label: 'Draw',
           value: drawOpacity,
@@ -99,19 +97,33 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   Widget _buildComparison() {
-    // If no decoded reference image, force side-by-side with network widget (web fallback)
+    // Cases order:
+    // 1. URL-only + overlay -> widget stack overlay (no pixel access).
+    // 2. Decoded + overlay -> painter overlay (pixel accurate).
+    // 3. URL-only + side-by-side -> fallback.
+    // 4. Decoded + side-by-side -> decoded compare.
+    if (overlay) {
+      if (widget.reference == null && widget.referenceUrl != null) {
+        return _UrlOverlayCompare(
+          refUrl: widget.referenceUrl!,
+          drawImg: widget.drawing,
+          refOpacity: refOpacity,
+          drawOpacity: drawOpacity,
+        );
+      }
+      if (widget.reference != null) {
+        return _OverlayCompare(
+          refImg: widget.reference!,
+          drawImg: widget.drawing,
+          refOpacity: refOpacity,
+          drawOpacity: drawOpacity,
+        );
+      }
+    }
     if (widget.reference == null) {
       return _SideBySideFallback(
         refUrl: widget.referenceUrl,
         drawImg: widget.drawing,
-      );
-    }
-    if (overlay) {
-      return _OverlayCompare(
-        refImg: widget.reference!,
-        drawImg: widget.drawing,
-        refOpacity: refOpacity,
-        drawOpacity: drawOpacity,
       );
     }
     return _SideBySideCompare(
@@ -248,6 +260,47 @@ class _OverlayPainter extends CustomPainter {
       old.drawImg != drawImg ||
       old.refOpacity != refOpacity ||
       old.drawOpacity != drawOpacity;
+}
+
+// Overlay for URL-only reference (no decoded pixels). We simply stack the
+// network image and drawing image; no per-pixel operations (color pick, diff)
+// are possible in this path.
+class _UrlOverlayCompare extends StatelessWidget {
+  final String refUrl;
+  final ui.Image drawImg;
+  final double refOpacity, drawOpacity;
+  const _UrlOverlayCompare({
+    required this.refUrl,
+    required this.drawImg,
+    required this.refOpacity,
+    required this.drawOpacity,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (_, constraints) {
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Opacity(
+              opacity: refOpacity,
+              child: FittedBox(
+                fit: BoxFit.contain,
+                child: Image.network(refUrl),
+              ),
+            ),
+            Opacity(
+              opacity: drawOpacity,
+              child: FittedBox(
+                fit: BoxFit.contain,
+                child: RawImage(image: drawImg),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _SideBySideFallback extends StatelessWidget {
