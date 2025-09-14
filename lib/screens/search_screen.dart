@@ -187,18 +187,24 @@ class _ResultTile extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.network(
-              result.previewUrl,
-              fit: BoxFit.cover,
-              webHtmlElementStrategy: kIsWeb
-                  ? WebHtmlElementStrategy.fallback
-                  : WebHtmlElementStrategy.never,
-              errorBuilder: (ctx, err, st) => const ColoredBox(
-                color: Colors.black26,
-                child: Icon(
-                  Icons.broken_image,
-                  size: 20,
-                  color: Colors.white54,
+            // Use contain to preserve the image's intrinsic aspect ratio and
+            // avoid the horizontal stretching/cropping seen with cover.
+            // Letterboxed areas show a neutral dark background.
+            ColoredBox(
+              color: const Color(0xFF202024),
+              child: Image.network(
+                result.previewUrl,
+                fit: BoxFit.contain,
+                webHtmlElementStrategy: kIsWeb
+                    ? WebHtmlElementStrategy.fallback
+                    : WebHtmlElementStrategy.never,
+                errorBuilder: (ctx, err, st) => const ColoredBox(
+                  color: Colors.black26,
+                  child: Icon(
+                    Icons.broken_image,
+                    size: 20,
+                    color: Colors.white54,
+                  ),
                 ),
               ),
             ),
