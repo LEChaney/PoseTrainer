@@ -24,7 +24,9 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   // Pre-fill with a sample query to make first run feel alive.
-  final _controller = TextEditingController(text: 'standing canine');
+  final _controller = TextEditingController(
+    text: 'standing canine favcount:>100',
+  );
 
   // --- Lifecycle -----------------------------------------------------------
 

@@ -229,6 +229,12 @@ class _CanvasArea extends StatelessWidget {
   final int Function() nowMs;
   final Future<void> Function() commitStroke;
   final ui.Image? base;
+  // We draw and store strokes in the intrinsic backing image coordinate space
+  // (base.width x base.height). When the on-screen canvas is a different size
+  // we simply scale the entire paint operation. This keeps stroke positions
+  // stable between the final pointer up position and the committed result and
+  // removes the visible "snap" caused by mixing raw screen coordinates with
+  // image-space compositing.
   const _CanvasArea({
     required this.engine,
     required this.pending,
@@ -244,10 +250,10 @@ class _CanvasArea extends StatelessWidget {
         final size = Size(c.maxWidth, c.maxHeight);
         return Listener(
           behavior: HitTestBehavior.opaque,
-          onPointerDown: (e) => _addPoint(e, reset: true),
-          onPointerMove: (e) => _addPoint(e),
+          onPointerDown: (e) => _addPoint(e, size, reset: true),
+          onPointerMove: (e) => _addPoint(e, size),
           onPointerUp: (e) async {
-            _addPoint(e);
+            _addPoint(e, size);
             await commitStroke();
           },
           child: AnimatedBuilder(
@@ -262,11 +268,15 @@ class _CanvasArea extends StatelessWidget {
     );
   }
 
-  void _addPoint(PointerEvent e, {bool reset = false}) {
+  void _addPoint(PointerEvent e, Size widgetSize, {bool reset = false}) {
     if (reset) engine.resetStroke();
-    pending.add(
-      InputPoint(e.localPosition.dx, e.localPosition.dy, pressure(e), nowMs()),
-    );
+    if (base == null) return;
+    // Map pointer coords (widget space) to backing image space. We stretch the
+    // base to fill the widget (maintaining aspect ratio only if widget ratio
+    // matches base). For now assume uniform scale determined by separate x/y.
+    final sx = e.localPosition.dx * (base!.width / widgetSize.width);
+    final sy = e.localPosition.dy * (base!.height / widgetSize.height);
+    pending.add(InputPoint(sx, sy, pressure(e), nowMs()));
   }
 }
 
@@ -276,24 +286,34 @@ class _PracticePainter extends CustomPainter {
   _PracticePainter(this.base, this.live);
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
+    // BRUSH RENDERING NOTES (post-gap & snap fixes):
+    // - Pointer samples are transformed into backing image space immediately.
+    // - We scale the canvas (image -> widget) once, then draw both the
+    //   committed base and the live stroke so their coordinates align exactly.
+    // - Gaps: The brush engine now interpolates intermediate dabs when motion
+    //   distance exceeds spacing, ensuring even coverage at high speed.
+    // - Square artifact: The brush sprite adds a transparent gutter + fully
+    //   transparent outer color stop to prevent hard alpha edges.
     // Clear background.
     canvas.drawRect(
       Offset.zero & size,
       ui.Paint()..color = const Color(0xFF111115),
     );
-    // Draw committed strokes (scaled to current canvas size).
     if (base != null) {
-      final dst = Offset.zero & size;
-      final src = ui.Rect.fromLTWH(
-        0,
-        0,
-        base!.width.toDouble(),
-        base!.height.toDouble(),
-      );
-      canvas.drawImageRect(base!, src, dst, ui.Paint());
+      // Uniform scale from image space to current size.
+      final sx = size.width / base!.width;
+      final sy = size.height / base!.height;
+      canvas.save();
+      canvas.scale(sx, sy);
+      // Draw committed in image space.
+      canvas.drawImage(base!, ui.Offset.zero, ui.Paint());
+      // Draw live dabs (already in image space coordinates) so no snap occurs.
+      live.draw(canvas);
+      canvas.restore();
+    } else {
+      // No base yet: draw live directly (already in widget space in this edge case).
+      live.draw(canvas);
     }
-    // Draw in-progress (live) dabs on top.
-    live.draw(canvas);
   }
 
   @override
