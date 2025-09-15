@@ -301,7 +301,7 @@ class _CanvasArea extends StatelessWidget {
           onPointerDown: (e) => _addPoint(e, size, reset: true),
           onPointerMove: (e) => _addPoint(e, size),
           onPointerUp: (e) async {
-            _addPoint(e, size);
+            //_addPoint(e, size); // Handled in move to avoid unexpected dabs on pointer up.
             flushPending();
             await commitStroke();
           },
