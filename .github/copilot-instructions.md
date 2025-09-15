@@ -19,7 +19,6 @@ Brush Pipeline (current scope): soft disc sprite, batched dabs (drawAtlas), comm
 Coding Style:
 - Descriptive multi-line widgets (avoid dense one-liners).
 - Extract helpers for long build / logic blocks.
-- Avoid deep nesting; prefer extracting private methods or widgets.
 - Material 3 components & theming.
 - Avoid bang operators unless obviously safe; prefer early null guards.
 - Avoid single character or ambiguous names; prefer descriptive identifiers.
@@ -45,6 +44,7 @@ Readability Addendum (beginner phase):
 - Temporary tutorial comments: explain why (intent) before how (mechanics); okay to be verbose now—will trim later.
 - Prefer section headers (// ---) to visually segment files: imports, models, state, build helpers.
 - Comment decision points: platform checks, error handling, image decoding rationale.
+- Comment all classes, functions, and non-trivial methods with API-style doc comments (///).
 - Avoid anonymous deeply nested closures; name them for clarity if >5 lines.
 
 Update this file only when core invariants change; keep <=50 lines.
