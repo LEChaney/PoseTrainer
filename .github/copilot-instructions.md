@@ -19,9 +19,10 @@ Brush Pipeline (current scope): soft disc sprite, batched dabs (drawAtlas), comm
 Coding Style:
 - Descriptive multi-line widgets (avoid dense one-liners).
 - Extract helpers for long build / logic blocks.
-- Use Duration objects (no raw ms ints in prod code).
+- Avoid deep nesting; prefer extracting private methods or widgets.
 - Material 3 components & theming.
 - Avoid bang operators unless obviously safe; prefer early null guards.
+- Avoid single character or ambiguous names; prefer descriptive identifiers.
 
 Networking:
 - http only; always send descriptive User-Agent for e621.
