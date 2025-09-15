@@ -85,9 +85,16 @@ class _PracticeScreenState extends State<PracticeScreen>
     _pending.clear();
   }
 
+  void _flushPending() {
+    if (_pending.isEmpty) return;
+    engine.addPoints(List.of(_pending));
+    _pending.clear();
+  }
+
   Future<void> _commitStroke() async {
     // Merge current live stroke (dabs) onto the backing image.
     if (_base == null) return;
+    _flushPending();
     final w = _base!.width, h = _base!.height;
     final rec = ui.PictureRecorder();
     final canvas = ui.Canvas(
@@ -188,6 +195,7 @@ class _PracticeScreenState extends State<PracticeScreen>
         pressure: _pressure,
         nowMs: _nowMs,
         commitStroke: _commitStroke,
+        flushPending: _flushPending,
         base: _base,
         fitMode: _fitMode,
       );
@@ -220,6 +228,9 @@ class _PracticeScreenState extends State<PracticeScreen>
   Widget _buildClearFab() => FloatingActionButton.extended(
     onPressed: () async {
       if (_base == null) return; // Early return reduces nesting.
+      _pending.clear();
+      engine.live.clear();
+      engine.resetStroke();
       await _initBase(_base!.width, _base!.height);
     },
     label: const Text('Clear'),
@@ -261,6 +272,7 @@ class _CanvasArea extends StatelessWidget {
   final double Function(dynamic) pressure;
   final int Function() nowMs;
   final Future<void> Function() commitStroke;
+  final VoidCallback flushPending;
   final ui.Image? base;
   final FitMode fitMode;
   // We draw and store strokes in the intrinsic backing image coordinate space
@@ -275,6 +287,7 @@ class _CanvasArea extends StatelessWidget {
     required this.pressure,
     required this.nowMs,
     required this.commitStroke,
+    required this.flushPending,
     required this.base,
     required this.fitMode,
   });
@@ -289,6 +302,7 @@ class _CanvasArea extends StatelessWidget {
           onPointerMove: (e) => _addPoint(e, size),
           onPointerUp: (e) async {
             _addPoint(e, size);
+            flushPending();
             await commitStroke();
           },
           child: AnimatedBuilder(
