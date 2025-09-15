@@ -540,7 +540,7 @@ class _BrushSlidersState extends State<_BrushSliders> {
                 widget.engine.setSizeScale(v);
               },
               min: 0.3,
-              max: 3.0,
+              max: 5.0,
             ),
             _buildSlider(
               label: 'Flow',
