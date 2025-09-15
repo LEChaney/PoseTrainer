@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/gestures.dart'; // added for PointerDeviceKind
 import '../services/brush_engine.dart';
 import '../services/session_service.dart';
 import 'review_screen.dart';
@@ -40,7 +41,16 @@ class _PracticeScreenState extends State<PracticeScreen>
   final List<InputPoint> _pending = [];
   late final Ticker _ticker;
   bool _handedOff = false; // Becomes true once we pass _base to ReviewScreen.
-  FitMode _fitMode = FitMode.cover; // default preserves full image without crop
+  bool _ctrlDown = false; // track Control key for panning mode
+
+  // Pixel density / base sizing
+  int _baseWidthPx = 0;
+  int _baseHeightPx = 0;
+  int? _pendingGrowW; // scheduled growth target width (px)
+  int? _pendingGrowH; // scheduled growth target height (px)
+  Offset _viewportOriginPx =
+      Offset.zero; // top-left of visible window in base pixels
+  double _lastDpr = 1.0;
 
   // --- Lifecycle -----------------------------------------------------------
 
@@ -57,7 +67,8 @@ class _PracticeScreenState extends State<PracticeScreen>
   }
 
   Future<void> _initBase(int w, int h) async {
-    // WHY: We maintain strokes on a backing image to avoid reprocessing old dabs each frame.
+    _baseWidthPx = w;
+    _baseHeightPx = h;
     final rec = ui.PictureRecorder();
     ui.Canvas(rec, ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
     final pic = rec.endRecording();
@@ -152,28 +163,26 @@ class _PracticeScreenState extends State<PracticeScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: _buildAppBar(),
-      body: _buildBody(),
-      floatingActionButton: _buildClearFab(),
+    return RawKeyboardListener(
+      focusNode: FocusNode(debugLabel: 'practiceScreenKeyboard')
+        ..requestFocus(),
+      onKey: (evt) {
+        final isCtrl = evt.isControlPressed;
+        if (isCtrl != _ctrlDown) {
+          setState(() => _ctrlDown = isCtrl);
+        }
+      },
+      child: Scaffold(
+        appBar: _buildAppBar(),
+        body: _buildBody(),
+        floatingActionButton: _buildClearFab(),
+      ),
     );
   }
 
   AppBar _buildAppBar() => AppBar(
     title: const Text('Practice'),
     actions: [
-      // Toggle between letterboxed contain (no crop) and cover (fills space, crops edges)
-      IconButton(
-        icon: Icon(_fitMode == FitMode.contain ? Icons.crop_free : Icons.crop),
-        tooltip: _fitMode == FitMode.contain
-            ? 'Use full space (Cover)'
-            : 'Preserve whole image (Contain)',
-        onPressed: () => setState(() {
-          _fitMode = _fitMode == FitMode.contain
-              ? FitMode.cover
-              : FitMode.contain;
-        }),
-      ),
       IconButton(
         icon: const Icon(Icons.check),
         onPressed: _finish,
@@ -184,6 +193,8 @@ class _PracticeScreenState extends State<PracticeScreen>
 
   Widget _buildBody() => LayoutBuilder(
     builder: (context, c) {
+      final logicalSize = Size(c.maxWidth, c.maxHeight);
+      _scheduleGrowthIfNeeded(logicalSize);
       final isWide = c.maxWidth > 900; // Simple responsive breakpoint.
       final referencePanel = _ReferencePanel(
         reference: widget.reference,
@@ -197,7 +208,13 @@ class _PracticeScreenState extends State<PracticeScreen>
         commitStroke: _commitStroke,
         flushPending: _flushPending,
         base: _base,
-        fitMode: _fitMode,
+        ctrlDown: _ctrlDown,
+        viewportOriginPx: _viewportOriginPx,
+        baseWidthPx: _baseWidthPx,
+        baseHeightPx: _baseHeightPx,
+        devicePixelRatio: _lastDpr,
+        applyPendingGrowth: _applyPendingGrowthIfAny,
+        onViewportChange: (o) => setState(() => _viewportOriginPx = o),
       );
       Widget layout = isWide
           ? Row(
@@ -225,13 +242,72 @@ class _PracticeScreenState extends State<PracticeScreen>
     },
   );
 
+  void _scheduleGrowthIfNeeded(Size logicalSize) {
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    _lastDpr = dpr;
+    final reqW = (logicalSize.width * dpr).ceil();
+    final reqH = (logicalSize.height * dpr).ceil();
+    if (_base == null) {
+      _initBase(reqW, reqH);
+      return;
+    }
+    if (reqW > _baseWidthPx || reqH > _baseHeightPx) {
+      _pendingGrowW = math.max(reqW, _baseWidthPx);
+      _pendingGrowH = math.max(reqH, _baseHeightPx);
+    }
+    // Clamp viewport origin within current base (may shrink logical window)
+    final viewW = reqW;
+    final viewH = reqH;
+    _viewportOriginPx = Offset(
+      _viewportOriginPx.dx.clamp(
+        0.0,
+        (_baseWidthPx - viewW).clamp(0, _baseWidthPx).toDouble(),
+      ),
+      _viewportOriginPx.dy.clamp(
+        0.0,
+        (_baseHeightPx - viewH).clamp(0, _baseHeightPx).toDouble(),
+      ),
+    );
+  }
+
+  Future<void> _applyPendingGrowthIfAny() async {
+    if (_pendingGrowW == null || _pendingGrowH == null) return;
+    final newW = _pendingGrowW!;
+    final newH = _pendingGrowH!;
+    if (newW <= _baseWidthPx && newH <= _baseHeightPx) {
+      _pendingGrowW = _pendingGrowH = null;
+      return;
+    }
+    final old = _base;
+    final rec = ui.PictureRecorder();
+    final canvas = ui.Canvas(
+      rec,
+      ui.Rect.fromLTWH(0, 0, newW.toDouble(), newH.toDouble()),
+    );
+    if (old != null) {
+      canvas.drawImage(old, ui.Offset.zero, ui.Paint());
+    }
+    final pic = rec.endRecording();
+    final grown = await pic.toImage(newW, newH);
+    old?.dispose();
+    _base = grown;
+    _baseWidthPx = newW;
+    _baseHeightPx = newH;
+    _pendingGrowW = _pendingGrowH = null;
+    setState(() {});
+  }
+
   Widget _buildClearFab() => FloatingActionButton.extended(
     onPressed: () async {
-      if (_base == null) return; // Early return reduces nesting.
+      if (_base == null) return;
       _pending.clear();
       engine.live.clear();
       engine.resetStroke();
-      await _initBase(_base!.width, _base!.height);
+      // Recreate base matching current viewport (grow target if pending)
+      final w = _pendingGrowW ?? _baseWidthPx;
+      final h = _pendingGrowH ?? _baseHeightPx;
+      await _initBase(w, h);
+      _pendingGrowW = _pendingGrowH = null;
     },
     label: const Text('Clear'),
     icon: const Icon(Icons.undo),
@@ -266,7 +342,7 @@ class _ReferencePanel extends StatelessWidget {
   }
 }
 
-class _CanvasArea extends StatelessWidget {
+class _CanvasArea extends StatefulWidget {
   final BrushEngine engine;
   final List<InputPoint> pending;
   final double Function(dynamic) pressure;
@@ -274,13 +350,13 @@ class _CanvasArea extends StatelessWidget {
   final Future<void> Function() commitStroke;
   final VoidCallback flushPending;
   final ui.Image? base;
-  final FitMode fitMode;
-  // We draw and store strokes in the intrinsic backing image coordinate space
-  // (base.width x base.height). When the on-screen canvas is a different size
-  // we simply scale the entire paint operation. This keeps stroke positions
-  // stable between the final pointer up position and the committed result and
-  // removes the visible "snap" caused by mixing raw screen coordinates with
-  // image-space compositing.
+  final bool ctrlDown;
+  final Offset viewportOriginPx;
+  final int baseWidthPx;
+  final int baseHeightPx;
+  final double devicePixelRatio;
+  final Future<void> Function() applyPendingGrowth;
+  final ValueChanged<Offset> onViewportChange;
   const _CanvasArea({
     required this.engine,
     required this.pending,
@@ -289,27 +365,86 @@ class _CanvasArea extends StatelessWidget {
     required this.commitStroke,
     required this.flushPending,
     required this.base,
-    required this.fitMode,
+    required this.ctrlDown,
+    required this.viewportOriginPx,
+    required this.baseWidthPx,
+    required this.baseHeightPx,
+    required this.devicePixelRatio,
+    required this.applyPendingGrowth,
+    required this.onViewportChange,
   });
+  @override
+  State<_CanvasArea> createState() => _CanvasAreaState();
+}
+
+class _CanvasAreaState extends State<_CanvasArea> {
+  Offset? _lastPanPos;
+  final Map<int, Offset> _touchPoints = {};
+  bool _multiPan = false;
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
-        final size = Size(c.maxWidth, c.maxHeight);
+        final logicalSize = Size(c.maxWidth, c.maxHeight);
+        final dpr = widget.devicePixelRatio;
+        final viewWidthPx = (logicalSize.width * dpr).ceil();
+        final viewHeightPx = (logicalSize.height * dpr).ceil();
         return Listener(
           behavior: HitTestBehavior.opaque,
-          onPointerDown: (e) => _addPoint(e, size, reset: true),
-          onPointerMove: (e) => _addPoint(e, size),
+          onPointerDown: (e) async {
+            if (e.kind == PointerDeviceKind.touch) {
+              _touchPoints[e.pointer] = e.localPosition;
+              if (_touchPoints.length == 2) _multiPan = true;
+            }
+            if (widget.ctrlDown || _multiPan) {
+              _lastPanPos = e.localPosition;
+            } else {
+              await widget.applyPendingGrowth();
+              _addPoint(e, logicalSize, reset: true);
+            }
+          },
+          onPointerMove: (e) {
+            if (e.kind == PointerDeviceKind.touch &&
+                _touchPoints.containsKey(e.pointer)) {
+              _touchPoints[e.pointer] = e.localPosition;
+            }
+            if (widget.ctrlDown || _multiPan) {
+              _handlePanMove(e, logicalSize, viewWidthPx, viewHeightPx);
+            } else {
+              _addPoint(e, logicalSize);
+            }
+          },
           onPointerUp: (e) async {
-            //_addPoint(e, size); // Handled in move to avoid unexpected dabs on pointer up.
-            flushPending();
-            await commitStroke();
+            if (e.kind == PointerDeviceKind.touch) {
+              _touchPoints.remove(e.pointer);
+              if (_touchPoints.length < 2) _multiPan = false;
+            }
+            if (!(widget.ctrlDown || _multiPan)) {
+              widget.flushPending();
+              await widget.commitStroke();
+            }
+            _lastPanPos = null;
+          },
+          onPointerCancel: (e) {
+            if (e.kind == PointerDeviceKind.touch) {
+              _touchPoints.remove(e.pointer);
+              if (_touchPoints.length < 2) _multiPan = false;
+            }
+            _lastPanPos = null;
           },
           child: AnimatedBuilder(
-            animation: engine,
-            builder: (_, _) => CustomPaint(
-              painter: _PracticePainter(base, engine.live, fitMode: fitMode),
-              size: size,
+            animation: widget.engine,
+            builder: (_, __) => CustomPaint(
+              painter: _PracticePainter(
+                widget.base,
+                widget.engine.live,
+                devicePixelRatio: dpr,
+                viewportOriginPx: widget.viewportOriginPx,
+                viewWidthPx: viewWidthPx,
+                viewHeightPx: viewHeightPx,
+              ),
+              size: logicalSize,
             ),
           ),
         );
@@ -317,45 +452,56 @@ class _CanvasArea extends StatelessWidget {
     );
   }
 
-  void _addPoint(PointerEvent e, Size widgetSize, {bool reset = false}) {
-    if (reset) engine.resetStroke();
-    if (base == null) return;
-    // Aspect-preserving transform. Two modes:
-    // contain -> letterbox (no crop, possibly unused bars, skip points outside)
-    // cover   -> fills widget (may crop image, no unused bars)
-    final iw = base!.width.toDouble();
-    final ih = base!.height.toDouble();
-    final sx = widgetSize.width / iw;
-    final sy = widgetSize.height / ih;
-    final bool cover = fitMode == FitMode.cover;
-    final scale = cover ? math.max(sx, sy) : math.min(sx, sy);
-    final drawW = iw * scale;
-    final drawH = ih * scale;
-    final dx = (widgetSize.width - drawW) / 2;
-    final dy = (widgetSize.height - drawH) / 2;
-    final local = e.localPosition;
-    // Contain: ignore pointer in letterbox bars. Cover: always map (bars negative or zero).
-    if (!cover) {
-      if (local.dx < dx ||
-          local.dx > dx + drawW ||
-          local.dy < dy ||
-          local.dy > dy + drawH) {
+  void _handlePanMove(PointerEvent e, Size logicalSize, int viewW, int viewH) {
+    Offset delta;
+    if (_multiPan && _touchPoints.isNotEmpty) {
+      final centroid =
+          _touchPoints.values.reduce((a, b) => a + b) /
+          _touchPoints.length.toDouble();
+      if (_lastPanPos == null) {
+        _lastPanPos = centroid;
         return;
       }
+      delta = centroid - _lastPanPos!;
+      _lastPanPos = centroid;
+    } else {
+      if (_lastPanPos == null) {
+        _lastPanPos = e.localPosition;
+        return;
+      }
+      delta = e.localPosition - _lastPanPos!;
+      _lastPanPos = e.localPosition;
     }
-    // In cover mode some of the image is outside the widget. Clamp to bounds
-    // so strokes at extreme edges do not wrap. (Could optionally allow out-of-range.)
-    double imgX = (local.dx - dx) / scale;
-    double imgY = (local.dy - dy) / scale;
-    if (cover) {
-      imgX = imgX.clamp(0.0, iw - 0.0001);
-      imgY = imgY.clamp(0.0, ih - 0.0001);
-    }
-    pending.add(InputPoint(imgX, imgY, pressure(e), nowMs()));
+    final dpr = widget.devicePixelRatio;
+    final pixelDelta = Offset(delta.dx * dpr, delta.dy * dpr);
+    var origin =
+        widget.viewportOriginPx - pixelDelta; // drag content with pointer
+    // Clamp within base
+    final maxX = (widget.baseWidthPx - viewW)
+        .clamp(0, widget.baseWidthPx)
+        .toDouble();
+    final maxY = (widget.baseHeightPx - viewH)
+        .clamp(0, widget.baseHeightPx)
+        .toDouble();
+    origin = Offset(origin.dx.clamp(0.0, maxX), origin.dy.clamp(0.0, maxY));
+    widget.onViewportChange(origin);
+  }
+
+  void _addPoint(PointerEvent e, Size logicalSize, {bool reset = false}) {
+    if (reset) widget.engine.resetStroke();
+    final base = widget.base;
+    if (base == null) return;
+    final dpr = widget.devicePixelRatio;
+    final imgX = widget.viewportOriginPx.dx + e.localPosition.dx * dpr;
+    final imgY = widget.viewportOriginPx.dy + e.localPosition.dy * dpr;
+    if (imgX < 0 || imgY < 0 || imgX >= base.width || imgY >= base.height)
+      return; // safety
+    widget.pending.add(
+      InputPoint(imgX, imgY, widget.pressure(e), widget.nowMs()),
+    );
   }
 }
 
-// Temporary development sliders for brush size & flow.
 class _BrushSliders extends StatefulWidget {
   final BrushEngine engine;
   const _BrushSliders({required this.engine});
@@ -457,42 +603,42 @@ class _BrushSlidersState extends State<_BrushSliders> {
 class _PracticePainter extends CustomPainter {
   final ui.Image? base;
   final StrokeLayer live;
-  _PracticePainter(this.base, this.live, {this.fitMode = FitMode.contain});
-  final FitMode fitMode;
+  final double devicePixelRatio;
+  final Offset viewportOriginPx;
+  final int viewWidthPx;
+  final int viewHeightPx;
+  _PracticePainter(
+    this.base,
+    this.live, {
+    required this.devicePixelRatio,
+    required this.viewportOriginPx,
+    required this.viewWidthPx,
+    required this.viewHeightPx,
+  });
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
-    // BRUSH RENDERING NOTES (post-gap & snap fixes):
-    // - Pointer samples are transformed into backing image space immediately.
-    // - We scale the canvas (image -> widget) once, then draw both the
-    //   committed base and the live stroke so their coordinates align exactly.
-    // - Gaps: The brush engine now interpolates intermediate dabs when motion
-    //   distance exceeds spacing, ensuring even coverage at high speed.
-    // - Square artifact: The brush sprite adds a transparent gutter + fully
-    //   transparent outer color stop to prevent hard alpha edges.
-    // Clear background.
     canvas.drawRect(
       Offset.zero & size,
       ui.Paint()..color = const Color(0xFF111115),
     );
-    if (base == null) {
-      live.draw(canvas);
+    final baseImage = base;
+    if (baseImage == null) {
+      // Nothing yet
       return;
     }
-    final iw = base!.width.toDouble();
-    final ih = base!.height.toDouble();
-    final sx = size.width / iw;
-    final sy = size.height / ih;
-    final scale = fitMode == FitMode.cover
-        ? math.max(sx, sy)
-        : math.min(sx, sy);
-    final drawW = iw * scale;
-    final drawH = ih * scale;
-    final dx = (size.width - drawW) / 2;
-    final dy = (size.height - drawH) / 2;
     canvas.save();
-    canvas.translate(dx, dy);
-    canvas.scale(scale, scale);
-    canvas.drawImage(base!, ui.Offset.zero, ui.Paint());
+    // Scale down so that image pixels map 1:1 to device pixels (logical coords scaled by dpr later by engine)
+    final inv = 1 / devicePixelRatio;
+    canvas.scale(inv, inv);
+    // Translate so viewport origin becomes (0,0) in logical space after scale
+    canvas.translate(-viewportOriginPx.dx, -viewportOriginPx.dy);
+    // Draw base full-res (no filter scaling happening)
+    canvas.drawImage(
+      baseImage,
+      ui.Offset.zero,
+      ui.Paint()..filterQuality = FilterQuality.none,
+    );
+    // Draw live dabs in image pixel space
     live.draw(canvas);
     canvas.restore();
   }
@@ -500,6 +646,3 @@ class _PracticePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _PracticePainter old) => true;
 }
-
-// Fit mode for drawing surface scaling.
-enum FitMode { contain, cover }

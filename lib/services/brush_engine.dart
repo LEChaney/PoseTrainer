@@ -167,37 +167,38 @@ class StrokeLayer {
 
   void add(Dab d) => _dabs.add(d);
 
-  void draw(ui.Canvas c) {
+  void draw(ui.Canvas canvas) {
     // Two-phase analytic dab: soft halo (optional) + bright core.
     // Goal: brighter center, harder visual edge while retaining adjustable softness.
     // Hardness mapping: 0 -> large soft halo; 1 -> almost no halo.
     final haloPaint = ui.Paint()..isAntiAlias = true;
     final corePaint = ui.Paint()..isAntiAlias = true;
-    for (final d in _dabs) {
-      final a = (d.alpha * 255).clamp(0, 255).round();
+    for (final dab in _dabs) {
+      final a = (dab.alpha * 255).clamp(0, 255).round();
       final hardness = _hardness;
       final coreRatio = ui.lerpDouble(
         0.45,
         0.8,
         hardness,
       )!; // bigger core when harder
-      final coreR = d.radius * coreRatio;
-      final haloR = d.radius;
+      final coreR = dab.radius * coreRatio;
+      final haloR = dab.radius;
       final haloAlpha =
           (1 - hardness) * 0.55; // fade halo as hardness increases
       if (haloAlpha > 0.01) {
         final sigma =
-            (haloR - coreR).clamp(0.0, d.radius) * 0.9; // soften outer falloff
+            (haloR - coreR).clamp(0.0, dab.radius) *
+            0.9; // soften outer falloff
         haloPaint
           ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, sigma)
           ..color = ui.Color.fromARGB((a * haloAlpha).round(), 255, 255, 255);
-        c.drawCircle(d.center, coreR + (haloR - coreR) * 0.5, haloPaint);
+        canvas.drawCircle(dab.center, coreR + (haloR - coreR) * 0.5, haloPaint);
       }
       // Core: full brightness (alpha) with sharp(er) edge (AA only)
       corePaint
         ..maskFilter = null
         ..color = ui.Color.fromARGB(a, 255, 255, 255);
-      c.drawCircle(d.center, coreR, corePaint);
+      canvas.drawCircle(dab.center, coreR, corePaint);
     }
   }
 }
