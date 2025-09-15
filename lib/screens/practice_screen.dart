@@ -193,8 +193,9 @@ class _PracticeScreenState extends State<PracticeScreen>
 
   Widget _buildBody() => LayoutBuilder(
     builder: (context, c) {
-      final logicalSize = Size(c.maxWidth, c.maxHeight);
-      _scheduleGrowthIfNeeded(logicalSize);
+      // We defer calling _scheduleGrowthIfNeeded until after we compute the
+      // pixel‑snapped canvas logical size (below) so the backing image grows
+      // to the actually used integer pixel span instead of a fractional one.
       final isWide = c.maxWidth > 900; // Simple responsive breakpoint.
       final referencePanel = _ReferencePanel(
         reference: widget.reference,
@@ -216,21 +217,60 @@ class _PracticeScreenState extends State<PracticeScreen>
         applyPendingGrowth: _applyPendingGrowthIfAny,
         onViewportChange: (o) => setState(() => _viewportOriginPx = o),
       );
-      Widget layout = isWide
-          ? Row(
-              children: [
-                SizedBox(width: c.maxWidth * 0.35, child: referencePanel),
-                const VerticalDivider(width: 1),
-                Expanded(child: canvasArea),
-              ],
-            )
-          : Column(
-              children: [
-                SizedBox(height: c.maxHeight * 0.35, child: referencePanel),
-                const Divider(height: 1),
-                Expanded(child: canvasArea),
-              ],
-            );
+      Widget layout;
+      // used for growth scheduling after layout calc
+      Size snappedCanvasLogicalSize;
+      if (isWide) {
+        // Wide layout: we previously used a percentage (0.35) width for the
+        // reference panel and let the canvas take the remaining width via
+        // Expanded. That produced fractional logical widths (e.g. 820.6) for
+        // the canvas, so even though _CanvasArea snaps internally, the tight
+        // parent constraints still forced the CustomPainter size to remain
+        // fractional. We instead assign a pixel‑snapped fixed width to the
+        // canvas and let the reference panel flex with the leftover space.
+        final dpr = MediaQuery.of(context).devicePixelRatio;
+        const dividerWidth = 1.0;
+        final targetCanvasLogical =
+            c.maxWidth * 0.65 - dividerWidth; // prior intent
+        final snappedCanvasPx = (targetCanvasLogical * dpr).floor();
+        final canvasLogicalW = snappedCanvasPx / dpr; // integer pixel span
+        final refLogicalW = c.maxWidth - dividerWidth - canvasLogicalW;
+        snappedCanvasLogicalSize = Size(canvasLogicalW, c.maxHeight);
+        layout = Row(
+          children: [
+            SizedBox(width: refLogicalW, child: referencePanel),
+            const VerticalDivider(width: dividerWidth),
+            SizedBox(
+              width: canvasLogicalW,
+              height: c.maxHeight,
+              child: canvasArea,
+            ),
+          ],
+        );
+      } else {
+        // Narrow layout: snap canvas height instead of relying on Expanded so
+        // height * dpr is integral (width already equals full constraint).
+        final dpr = MediaQuery.of(context).devicePixelRatio;
+        const dividerHeight = 1.0;
+        final targetCanvasLogicalH = c.maxHeight * 0.65 - dividerHeight;
+        final snappedCanvasPxH = (targetCanvasLogicalH * dpr).floor();
+        final canvasLogicalH = snappedCanvasPxH / dpr;
+        final refLogicalH = c.maxHeight - dividerHeight - canvasLogicalH;
+        snappedCanvasLogicalSize = Size(c.maxWidth, canvasLogicalH);
+        layout = Column(
+          children: [
+            SizedBox(height: refLogicalH, child: referencePanel),
+            const Divider(height: dividerHeight),
+            SizedBox(
+              height: canvasLogicalH,
+              width: c.maxWidth,
+              child: canvasArea,
+            ),
+          ],
+        );
+      }
+      // Now that we know the canvas' snapped logical size, schedule any base growth.
+      _scheduleGrowthIfNeeded(snappedCanvasLogicalSize);
       // Overlay sliders (temporary dev UI) for size & flow.
       layout = Stack(
         children: [
