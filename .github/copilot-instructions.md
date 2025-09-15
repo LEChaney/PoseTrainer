@@ -20,7 +20,7 @@ Coding Style:
 - Descriptive multi-line widgets (avoid dense one-liners).
 - Extract helpers for long build / logic blocks.
 - Material 3 components & theming.
-- Avoid bang operators unless obviously safe; prefer early null guards.
+- Minimize bang (!) usage; use early null guards and local vars (e.g. `final baseImage = _base;`) for non-null promotion.
 - Avoid single character or ambiguous names; prefer descriptive identifiers.
 
 Networking:
