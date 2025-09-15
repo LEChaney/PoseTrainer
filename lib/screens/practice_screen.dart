@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/gestures.dart'; // added for PointerDeviceKind
+import 'package:flutter/services.dart'; // for HardwareKeyboard / KeyEvent
 import '../services/brush_engine.dart';
 import '../services/session_service.dart';
 import 'review_screen.dart';
@@ -19,6 +20,10 @@ import 'review_screen.dart';
 // - A Ticker (from SingleTickerProviderStateMixin) drives per-frame updates.
 // - Reference can be provided as a decoded image (native) OR just a URL (web).
 // - Layout adapts: wide = side-by-side, narrow = vertical stack.
+
+// Layout constants (tune here – single source)
+const double _kWideCanvasFraction = 0.65;
+const double _kDividerThickness = 1.0;
 
 class PracticeScreen extends StatefulWidget {
   final ui.Image? reference; // may be null on web if we only have URL
@@ -50,7 +55,6 @@ class _PracticeScreenState extends State<PracticeScreen>
   int? _pendingGrowH; // scheduled growth target height (px)
   Offset _viewportOriginPx =
       Offset.zero; // top-left of visible window in base pixels
-  double _lastDpr = 1.0;
 
   // --- Lifecycle -----------------------------------------------------------
 
@@ -163,11 +167,11 @@ class _PracticeScreenState extends State<PracticeScreen>
 
   @override
   Widget build(BuildContext context) {
-    return RawKeyboardListener(
+    return KeyboardListener(
       focusNode: FocusNode(debugLabel: 'practiceScreenKeyboard')
         ..requestFocus(),
-      onKey: (evt) {
-        final isCtrl = evt.isControlPressed;
+      onKeyEvent: (KeyEvent event) {
+        final isCtrl = HardwareKeyboard.instance.isControlPressed;
         if (isCtrl != _ctrlDown) {
           setState(() => _ctrlDown = isCtrl);
         }
@@ -192,120 +196,129 @@ class _PracticeScreenState extends State<PracticeScreen>
   );
 
   Widget _buildBody() => LayoutBuilder(
-    builder: (context, c) {
-      // We defer calling _scheduleGrowthIfNeeded until after we compute the
-      // pixel‑snapped canvas logical size (below) so the backing image grows
-      // to the actually used integer pixel span instead of a fractional one.
-      final isWide = c.maxWidth > 900; // Simple responsive breakpoint.
+    builder: (context, constraints) {
+      final dpr = MediaQuery.of(context).devicePixelRatio;
+      final isWide = constraints.maxWidth > 900;
       final referencePanel = _ReferencePanel(
         reference: widget.reference,
         referenceUrl: widget.referenceUrl,
       );
-      final canvasArea = _CanvasArea(
-        engine: engine,
-        pending: _pending,
-        pressure: _pressure,
-        nowMs: _nowMs,
-        commitStroke: _commitStroke,
-        flushPending: _flushPending,
-        base: _base,
-        ctrlDown: _ctrlDown,
-        viewportOriginPx: _viewportOriginPx,
-        baseWidthPx: _baseWidthPx,
-        baseHeightPx: _baseHeightPx,
-        devicePixelRatio: _lastDpr,
-        applyPendingGrowth: _applyPendingGrowthIfAny,
-        onViewportChange: (o) => setState(() => _viewportOriginPx = o),
-      );
+
+      // Decide canvas logical size (pre‑snap) based on mode.
+      Size canvasLogical;
       Widget layout;
-      // used for growth scheduling after layout calc
-      Size snappedCanvasLogicalSize;
+
       if (isWide) {
-        // Wide layout: we previously used a percentage (0.35) width for the
-        // reference panel and let the canvas take the remaining width via
-        // Expanded. That produced fractional logical widths (e.g. 820.6) for
-        // the canvas, so even though _CanvasArea snaps internally, the tight
-        // parent constraints still forced the CustomPainter size to remain
-        // fractional. We instead assign a pixel‑snapped fixed width to the
-        // canvas and let the reference panel flex with the leftover space.
-        final dpr = MediaQuery.of(context).devicePixelRatio;
-        const dividerWidth = 1.0;
-        final targetCanvasLogical =
-            c.maxWidth * 0.65 - dividerWidth; // prior intent
-        final snappedCanvasPx = (targetCanvasLogical * dpr).floor();
-        final canvasLogicalW = snappedCanvasPx / dpr; // integer pixel span
-        final refLogicalW = c.maxWidth - dividerWidth - canvasLogicalW;
-        snappedCanvasLogicalSize = Size(canvasLogicalW, c.maxHeight);
+        final rawCanvasLogicalW =
+            constraints.maxWidth * _kWideCanvasFraction - _kDividerThickness;
+        final snappedCanvasLogicalW = _snapLogical(rawCanvasLogicalW, dpr);
+        final refLogicalW =
+            constraints.maxWidth - _kDividerThickness - snappedCanvasLogicalW;
+        canvasLogical = Size(snappedCanvasLogicalW, constraints.maxHeight);
+
         layout = Row(
           children: [
             SizedBox(width: refLogicalW, child: referencePanel),
-            const VerticalDivider(width: dividerWidth),
+            const VerticalDivider(width: _kDividerThickness),
             SizedBox(
-              width: canvasLogicalW,
-              height: c.maxHeight,
-              child: canvasArea,
+              width: canvasLogical.width,
+              height: canvasLogical.height,
+              child: _buildCanvasArea(dpr, canvasLogical),
             ),
           ],
         );
       } else {
-        // Narrow layout: snap canvas height instead of relying on Expanded so
-        // height * dpr is integral (width already equals full constraint).
-        final dpr = MediaQuery.of(context).devicePixelRatio;
-        const dividerHeight = 1.0;
-        final targetCanvasLogicalH = c.maxHeight * 0.65 - dividerHeight;
-        final snappedCanvasPxH = (targetCanvasLogicalH * dpr).floor();
-        final canvasLogicalH = snappedCanvasPxH / dpr;
-        final refLogicalH = c.maxHeight - dividerHeight - canvasLogicalH;
-        snappedCanvasLogicalSize = Size(c.maxWidth, canvasLogicalH);
+        final rawCanvasLogicalH =
+            constraints.maxHeight * _kWideCanvasFraction - _kDividerThickness;
+        final snappedCanvasLogicalH = _snapLogical(rawCanvasLogicalH, dpr);
+        final refLogicalH =
+            constraints.maxHeight - _kDividerThickness - snappedCanvasLogicalH;
+        canvasLogical = Size(constraints.maxWidth, snappedCanvasLogicalH);
+
         layout = Column(
           children: [
             SizedBox(height: refLogicalH, child: referencePanel),
-            const Divider(height: dividerHeight),
+            const Divider(height: _kDividerThickness),
             SizedBox(
-              height: canvasLogicalH,
-              width: c.maxWidth,
-              child: canvasArea,
+              width: canvasLogical.width,
+              height: canvasLogical.height,
+              child: _buildCanvasArea(dpr, canvasLogical),
             ),
           ],
         );
       }
-      // Now that we know the canvas' snapped logical size, schedule any base growth.
-      _scheduleGrowthIfNeeded(snappedCanvasLogicalSize);
-      // Overlay sliders (temporary dev UI) for size & flow.
-      layout = Stack(
+
+      // Schedule backing growth (or initial creation) from a single snapped size.
+      _scheduleGrowthIfNeeded(canvasLogical, dpr);
+
+      // Dev overlay (brush sliders)
+      return Stack(
         children: [
           layout,
           Positioned(right: 8, top: 8, child: _BrushSliders(engine: engine)),
         ],
       );
-      return layout;
     },
   );
 
-  void _scheduleGrowthIfNeeded(Size logicalSize) {
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    _lastDpr = dpr;
-    final reqW = (logicalSize.width * dpr).ceil();
-    final reqH = (logicalSize.height * dpr).ceil();
+  Widget _buildCanvasArea(double dpr, Size canvasLogical) {
+    return _CanvasArea(
+      engine: engine,
+      pending: _pending,
+      pressure: _pressure,
+      nowMs: _nowMs,
+      commitStroke: _commitStroke,
+      flushPending: _flushPending,
+      base: _base,
+      ctrlDown: _ctrlDown,
+      viewportOriginPx: _viewportOriginPx,
+      baseWidthPx: _baseWidthPx,
+      baseHeightPx: _baseHeightPx,
+      devicePixelRatio: dpr,
+      applyPendingGrowth: _applyPendingGrowthIfAny,
+      onViewportChange: (o) => setState(() => _viewportOriginPx = o),
+    );
+  }
+
+  /// Ensures backing image matches (or grows to) snapped canvas size.
+  void _scheduleGrowthIfNeeded(Size snappedLogicalSize, double dpr) {
+    // dpr retained locally; no longer cached globally (removed unused field warning).
+
+    // Because we snapped logical size, this multiplication should be integral.
+    final reqW = (snappedLogicalSize.width * dpr).round();
+    final reqH = (snappedLogicalSize.height * dpr).round();
+
+    assert(() {
+      final exactW = snappedLogicalSize.width * dpr;
+      final exactH = snappedLogicalSize.height * dpr;
+      if (exactW % 1 != 0 || exactH % 1 != 0) {
+        debugPrint(
+          'WARNING: snapped size not integral: $exactW x $exactH (dpr=$dpr)',
+        );
+      }
+      return true;
+    }());
+
     if (_base == null) {
       _initBase(reqW, reqH);
       return;
     }
+
     if (reqW > _baseWidthPx || reqH > _baseHeightPx) {
+      // Grow only upward (never shrink).
       _pendingGrowW = math.max(reqW, _baseWidthPx);
       _pendingGrowH = math.max(reqH, _baseHeightPx);
     }
-    // Clamp viewport origin within current base (may shrink logical window)
-    final viewW = reqW;
-    final viewH = reqH;
+
+    // Clamp viewport origin (if canvas shrank within existing base).
     _viewportOriginPx = Offset(
       _viewportOriginPx.dx.clamp(
         0.0,
-        (_baseWidthPx - viewW).clamp(0, _baseWidthPx).toDouble(),
+        (_baseWidthPx - reqW).clamp(0, _baseWidthPx).toDouble(),
       ),
       _viewportOriginPx.dy.clamp(
         0.0,
-        (_baseHeightPx - viewH).clamp(0, _baseHeightPx).toDouble(),
+        (_baseHeightPx - reqH).clamp(0, _baseHeightPx).toDouble(),
       ),
     );
   }
@@ -475,7 +488,7 @@ class _CanvasAreaState extends State<_CanvasArea> {
           },
           child: AnimatedBuilder(
             animation: widget.engine,
-            builder: (_, __) => CustomPaint(
+            builder: (context, child) => CustomPaint(
               painter: _PracticePainter(
                 widget.base,
                 widget.engine.live,
@@ -534,8 +547,9 @@ class _CanvasAreaState extends State<_CanvasArea> {
     final dpr = widget.devicePixelRatio;
     final imgX = widget.viewportOriginPx.dx + e.localPosition.dx * dpr;
     final imgY = widget.viewportOriginPx.dy + e.localPosition.dy * dpr;
-    if (imgX < 0 || imgY < 0 || imgX >= base.width || imgY >= base.height)
+    if (imgX < 0 || imgY < 0 || imgX >= base.width || imgY >= base.height) {
       return; // safety
+    }
     widget.pending.add(
       InputPoint(imgX, imgY, widget.pressure(e), widget.nowMs()),
     );
@@ -686,3 +700,7 @@ class _PracticePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _PracticePainter old) => true;
 }
+
+/// Snap a logical dimension so logical * dpr is an integer pixel span.
+double _snapLogical(double logical, double dpr) =>
+    (logical * dpr).floor() / dpr;
