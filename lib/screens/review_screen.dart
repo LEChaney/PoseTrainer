@@ -1,6 +1,9 @@
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../theme/colors.dart';
+import '../widgets/letterboxed_image.dart';
+import '../widgets/reference_draw_split.dart';
 
 // review_screen.dart
 // ------------------
@@ -121,30 +124,15 @@ class _ReviewScreenState extends State<ReviewScreen> {
         );
       }
     }
-    if (widget.reference == null) {
-      return _SideBySideFallback(
-        refUrl: widget.referenceUrl,
-        drawImg: widget.drawing,
-      );
-    }
-    return _SideBySideCompare(
-      refImg: widget.reference!,
-      drawImg: widget.drawing,
-    );
-  }
-}
-
-class _SideBySideCompare extends StatelessWidget {
-  final ui.Image refImg, drawImg;
-  const _SideBySideCompare({required this.refImg, required this.drawImg});
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(child: _FittedImage(img: refImg, opacity: 1)),
-        const VerticalDivider(width: 16, thickness: 1),
-        Expanded(child: _FittedImage(img: drawImg, opacity: 1)),
-      ],
+    return ReferenceDrawSplit(
+      referenceImage: widget.reference,
+      referenceUrl: widget.referenceUrl,
+      letterboxReference: true,
+      letterboxDrawing: true,
+      drawingChild: LetterboxedImage(
+        image: widget.drawing,
+        background: kPaperColor,
+      ),
     );
   }
 }
@@ -168,21 +156,7 @@ class _OverlayCompare extends StatelessWidget {
 }
 
 // Displays a decoded ui.Image scaled to fit while preserving aspect ratio with optional opacity.
-class _FittedImage extends StatelessWidget {
-  final ui.Image img;
-  final double opacity;
-  const _FittedImage({required this.img, required this.opacity});
-  @override
-  Widget build(BuildContext context) {
-    return FittedBox(
-      fit: BoxFit.contain,
-      child: Opacity(
-        opacity: opacity,
-        child: RawImage(image: img),
-      ),
-    );
-  }
-}
+// Removed _FittedImage in favor of shared LetterboxedImage.
 
 // Compact labeled opacity slider used for both reference & drawing channels.
 class _OpacitySlider extends StatelessWidget {
@@ -309,35 +283,4 @@ class _UrlOverlayCompare extends StatelessWidget {
   }
 }
 
-class _SideBySideFallback extends StatelessWidget {
-  final String? refUrl;
-  final ui.Image drawImg;
-  const _SideBySideFallback({required this.refUrl, required this.drawImg});
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: DecoratedBox(
-            decoration: const BoxDecoration(color: Color(0xFF1A1A1E)),
-            child: refUrl != null
-                ? Image.network(refUrl!, fit: BoxFit.contain)
-                : const Center(
-                    child: Text(
-                      'No reference',
-                      style: TextStyle(color: Colors.white54),
-                    ),
-                  ),
-          ),
-        ),
-        const VerticalDivider(width: 16, thickness: 1),
-        Expanded(
-          child: FittedBox(
-            fit: BoxFit.contain,
-            child: RawImage(image: drawImg),
-          ),
-        ),
-      ],
-    );
-  }
-}
+// Legacy side-by-side widgets removed in favor of ReferenceDrawSplit.

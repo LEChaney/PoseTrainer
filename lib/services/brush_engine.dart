@@ -42,6 +42,8 @@ class BrushParams {
 
   // Global multiplier
   final double opacity; // Overall stroke opacity cap
+  // Stroke color (currently single monochrome brush). Alpha is modulated per dab.
+  final ui.Color color;
 
   const BrushParams({
     // Loose construction sketch defaults (SAI-like)
@@ -55,6 +57,7 @@ class BrushParams {
     this.flowGamma = 1.0,
     this.hardness = 0.2,
     this.opacity = 1.0,
+    this.color = const ui.Color(0xFF111115),
   });
 
   BrushParams copyWith({
@@ -68,6 +71,7 @@ class BrushParams {
     double? flowGamma,
     double? hardness,
     double? opacity,
+    ui.Color? color,
   }) {
     return BrushParams(
       sizePx: sizePx ?? this.sizePx,
@@ -80,6 +84,7 @@ class BrushParams {
       flowGamma: flowGamma ?? this.flowGamma,
       hardness: hardness ?? this.hardness,
       opacity: opacity ?? this.opacity,
+      color: color ?? this.color,
     );
   }
 }
@@ -189,15 +194,27 @@ class StrokeLayer {
         final sigma =
             (haloR - coreR).clamp(0.0, dab.radius) *
             0.9; // soften outer falloff
+        final c = BrushEngine.currentColor;
         haloPaint
           ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, sigma)
-          ..color = ui.Color.fromARGB((a * haloAlpha).round(), 255, 255, 255);
+          ..color = ui.Color.fromARGB(
+            (a * haloAlpha).round(),
+            (c.r * 255).round().clamp(0, 255),
+            (c.g * 255).round().clamp(0, 255),
+            (c.b * 255).round().clamp(0, 255),
+          );
         canvas.drawCircle(dab.center, coreR + (haloR - coreR) * 0.5, haloPaint);
       }
       // Core: full brightness (alpha) with sharp(er) edge (AA only)
+      final c2 = BrushEngine.currentColor;
       corePaint
         ..maskFilter = null
-        ..color = ui.Color.fromARGB(a, 255, 255, 255);
+        ..color = ui.Color.fromARGB(
+          a,
+          (c2.r * 255).round().clamp(0, 255),
+          (c2.g * 255).round().clamp(0, 255),
+          (c2.b * 255).round().clamp(0, 255),
+        );
       canvas.drawCircle(dab.center, coreR, corePaint);
     }
   }
@@ -219,7 +236,17 @@ class BrushEngine extends ChangeNotifier {
     ..beta = 0.02; // Pressure smoothing (slightly faster)
   double? _lastX, _lastY; // Last dab center to enforce spacing
 
-  BrushEngine(this.params);
+  BrushEngine(this.params) {
+    _strokeColorFallback = params.color;
+  }
+
+  // Current stroke color (shared with StrokeLayer draw). For now single global.
+  static ui.Color _strokeColorFallback = const ui.Color(0xFF111115);
+  static ui.Color get currentColor => _strokeColorFallback;
+  void setColor(ui.Color c) {
+    _strokeColorFallback = c;
+    notifyListeners();
+  }
 
   // Runtime multipliers (temporary before full preset UI). These *only*
   // scale size and flow curves; base param object stays immutable.

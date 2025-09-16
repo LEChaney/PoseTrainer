@@ -8,6 +8,9 @@ import 'package:flutter/services.dart'; // for HardwareKeyboard / KeyEvent
 import '../services/brush_engine.dart';
 import '../services/session_service.dart';
 import 'review_screen.dart';
+import '../theme/colors.dart';
+// Layout constants consumed indirectly by ReferenceDrawSplit.
+import '../widgets/reference_draw_split.dart';
 
 // practice_screen.dart
 // --------------------
@@ -21,9 +24,8 @@ import 'review_screen.dart';
 // - Reference can be provided as a decoded image (native) OR just a URL (web).
 // - Layout adapts: wide = side-by-side, narrow = vertical stack.
 
-// Layout constants (tune here – single source)
-const double _kWideCanvasFraction = 0.65;
-const double _kDividerThickness = 1.0;
+// Layout constants now come from `constants/layout.dart`.
+// Potential future: expose stroke color palette UI; current default comes from BrushParams.
 
 class PracticeScreen extends StatefulWidget {
   final ui.Image? reference; // may be null on web if we only have URL
@@ -203,72 +205,20 @@ class _PracticeScreenState extends State<PracticeScreen>
     ],
   );
 
-  Widget _buildBody() => LayoutBuilder(
-    builder: (context, constraints) {
-      final dpr = MediaQuery.of(context).devicePixelRatio;
-      final isWide = constraints.maxWidth > 900;
-      final referencePanel = _ReferencePanel(
-        reference: widget.reference,
-        referenceUrl: widget.referenceUrl,
-      );
-
-      // Decide canvas logical size (pre‑snap) based on mode.
-      Size canvasLogical;
-      Widget layout;
-
-      if (isWide) {
-        final rawCanvasLogicalW =
-            constraints.maxWidth * _kWideCanvasFraction - _kDividerThickness;
-        final snappedCanvasLogicalW = _snapLogical(rawCanvasLogicalW, dpr);
-        final snappedCanvasLogicalH = _snapLogical(constraints.maxHeight, dpr);
-        final refLogicalW =
-            constraints.maxWidth - _kDividerThickness - snappedCanvasLogicalW;
-        canvasLogical = Size(snappedCanvasLogicalW, snappedCanvasLogicalH);
-
-        layout = Row(
-          children: [
-            SizedBox(width: refLogicalW, child: referencePanel),
-            const VerticalDivider(width: _kDividerThickness),
-            SizedBox(
-              width: canvasLogical.width,
-              height: canvasLogical.height,
-              child: _buildCanvasArea(dpr, canvasLogical),
-            ),
-          ],
-        );
-      } else {
-        final rawCanvasLogicalH =
-            constraints.maxHeight * _kWideCanvasFraction - _kDividerThickness;
-        final snappedCanvasLogicalW = _snapLogical(constraints.maxWidth, dpr);
-        final snappedCanvasLogicalH = _snapLogical(rawCanvasLogicalH, dpr);
-        final refLogicalH =
-            constraints.maxHeight - _kDividerThickness - snappedCanvasLogicalH;
-        canvasLogical = Size(snappedCanvasLogicalW, snappedCanvasLogicalH);
-
-        layout = Column(
-          children: [
-            SizedBox(height: refLogicalH, child: referencePanel),
-            const Divider(height: _kDividerThickness),
-            SizedBox(
-              width: canvasLogical.width,
-              height: canvasLogical.height,
-              child: _buildCanvasArea(dpr, canvasLogical),
-            ),
-          ],
-        );
-      }
-
-      // Schedule backing growth (or initial creation) from a single snapped size.
-      _scheduleGrowthIfNeeded(canvasLogical, dpr);
-
-      // Dev overlay (brush sliders)
-      return Stack(
-        children: [
-          layout,
-          Positioned(right: 8, top: 8, child: _BrushSliders(engine: engine)),
-        ],
-      );
-    },
+  Widget _buildBody() => ReferenceDrawSplit(
+    referenceImage: widget.reference,
+    referenceUrl: widget.referenceUrl,
+    letterboxReference: true,
+    letterboxDrawing: true,
+    overlayTopRight: _BrushSliders(engine: engine),
+    drawingChild: LayoutBuilder(
+      builder: (context, constraints) {
+        final dpr = MediaQuery.of(context).devicePixelRatio;
+        final canvasLogical = Size(constraints.maxWidth, constraints.maxHeight);
+        _scheduleGrowthIfNeeded(canvasLogical, dpr);
+        return _buildCanvasArea(dpr, canvasLogical);
+      },
+    ),
   );
 
   Widget _buildCanvasArea(double dpr, Size canvasLogical) {
@@ -381,33 +331,7 @@ class _PracticeScreenState extends State<PracticeScreen>
   );
 }
 
-class _ReferencePanel extends StatelessWidget {
-  final ui.Image? reference;
-  final String? referenceUrl;
-  const _ReferencePanel({required this.reference, required this.referenceUrl});
-  @override
-  Widget build(BuildContext context) {
-    Widget child;
-    if (reference != null) {
-      child = FittedBox(
-        fit: BoxFit.contain,
-        child: RawImage(image: reference),
-      );
-    } else if (referenceUrl != null) {
-      child = Image.network(
-        referenceUrl!,
-        fit: BoxFit.contain,
-        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-      );
-    } else {
-      child = const Center(child: Text('No reference'));
-    }
-    return DecoratedBox(
-      decoration: const BoxDecoration(color: Color(0xFF1A1A1E)),
-      child: Center(child: child),
-    );
-  }
-}
+// _ReferencePanel removed (logic centralized in ReferenceDrawSplit).
 
 class _CanvasArea extends StatefulWidget {
   final BrushEngine engine;
@@ -685,10 +609,8 @@ class _PracticePainter extends CustomPainter {
   });
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      ui.Paint()..color = const Color(0xFF111115),
-    );
+    // Fill visible region with paper color in case base is smaller / panned.
+    canvas.drawRect(Offset.zero & size, ui.Paint()..color = kPaperColor);
     final baseImage = base;
     if (baseImage == null) {
       // Nothing yet
@@ -715,6 +637,4 @@ class _PracticePainter extends CustomPainter {
   bool shouldRepaint(covariant _PracticePainter old) => true;
 }
 
-/// Snap a logical dimension so logical * dpr is an integer pixel span.
-double _snapLogical(double logical, double dpr) =>
-    (logical * dpr).floor() / dpr;
+// _snapLogical removed; snapping handled in shared split widget.
