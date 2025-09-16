@@ -44,14 +44,14 @@ class PracticeScreen extends StatefulWidget {
 class _PracticeScreenState extends State<PracticeScreen>
     with SingleTickerProviderStateMixin {
   late final BrushEngine engine;
-  ui.Image? _base; // committed strokes
+  ui.Image? _finalComposite; // only created on finish for review
   final List<InputPoint> _pending = [];
   late final Ticker _ticker;
   bool _handedOff = false; // Becomes true once we pass _base to ReviewScreen.
   bool _ctrlDown = false; // track Control key for panning mode
 
   // Pixel density / base sizing
-  int _baseWidthPx = 0;
+  int _baseWidthPx = 0; // canvas extent tracked for export sizing
   int _baseHeightPx = 0;
   int? _pendingGrowW; // scheduled growth target width (px)
   int? _pendingGrowH; // scheduled growth target height (px)
@@ -67,20 +67,13 @@ class _PracticeScreenState extends State<PracticeScreen>
     // Pick canvas size: use reference image dimensions if available; otherwise a square fallback.
     final w = widget.reference?.width ?? 1200;
     final h = widget.reference?.height ?? 1200;
-    _initBase(w, h);
+    _baseWidthPx = w;
+    _baseHeightPx = h;
     // Ticker drives per-frame flushing of buffered pointer points to the brush engine.
     _ticker = createTicker(_onFrame)..start();
   }
 
-  Future<void> _initBase(int w, int h) async {
-    _baseWidthPx = w;
-    _baseHeightPx = h;
-    final rec = ui.PictureRecorder();
-    ui.Canvas(rec, ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
-    final pic = rec.endRecording();
-    _base = await pic.toImage(w, h);
-    setState(() {}); // Trigger repaint with new blank base.
-  }
+  // (Old _initBase removed – tiling approach no longer preallocates full image.)
 
   int _nowMs() => DateTime.now().millisecondsSinceEpoch;
 
@@ -100,51 +93,35 @@ class _PracticeScreenState extends State<PracticeScreen>
     if (_pending.isEmpty) return;
     engine.addPoints(List.of(_pending));
     _pending.clear();
+    // After adding new points, bake existing live dabs for constant cost.
+    // Await to keep ordering predictable; work is per-dab small.
+    engine.bakeLiveToTiles();
   }
 
   void _flushPending() {
     if (_pending.isEmpty) return;
     engine.addPoints(List.of(_pending));
     _pending.clear();
+    engine.bakeLiveToTiles();
   }
 
   Future<void> _commitStroke() async {
-    // Merge current live stroke (dabs) onto the backing image.
-    if (_base == null) return;
-    _flushPending();
-    final previous = _base!; // retain old reference; do NOT dispose yet.
-    final w = previous.width, h = previous.height;
-    final rec = ui.PictureRecorder();
-    final canvas = ui.Canvas(
-      rec,
-      ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
-    );
-    // Draw previous base first.
-    canvas.drawImage(previous, ui.Offset.zero, ui.Paint());
-    // Composite live dabs on top.
-    engine.live.draw(canvas);
-    final pic = rec.endRecording();
-    final merged = await pic.toImage(w, h);
-    // Swap to new image before scheduling disposal of old to avoid a tiny race
-    // where pointer events arriving between dispose() and assignment would
-    // still read width/height from a disposed image (seen on web canvaskit).
-    _base = merged;
-    // Defer disposal to end of frame so any in-flight events using the old
-    // image complete safely.
-    WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
-    engine.live.clear();
-    setState(() {}); // Repaint with committed state.
+    /* no-op: baking occurs every frame */
   }
 
   Future<void> _finish() async {
     // Finalize: commit any in-progress stroke, store session, navigate to review.
-    await _commitStroke();
-    if (!mounted || _base == null) return;
+    // Ensure final baking then render composite.
+    _flushPending();
+    await engine.bakeLiveToTiles();
+    final finalImg = await engine.renderFull(_baseWidthPx, _baseHeightPx);
+    _finalComposite = finalImg;
+    if (!mounted) return;
     if (widget.reference != null) {
       context.read<SessionService>().add(
         widget.sourceUrl,
         widget.reference!,
-        _base!,
+        finalImg,
       );
     }
     // We are about to transfer ownership of _base to the next screen. We must
@@ -157,7 +134,7 @@ class _PracticeScreenState extends State<PracticeScreen>
         builder: (_) => ReviewScreen(
           reference: widget.reference,
           referenceUrl: widget.referenceUrl,
-          drawing: _base!,
+          drawing: finalImg,
           sourceUrl: widget.sourceUrl,
         ),
       ),
@@ -170,8 +147,9 @@ class _PracticeScreenState extends State<PracticeScreen>
     // Dispose only if we still own the backing image. After navigation to
     // ReviewScreen the image is displayed there and must remain valid.
     if (!_handedOff) {
-      _base?.dispose();
+      _finalComposite?.dispose();
     }
+    engine.disposeResources();
     super.dispose();
   }
 
@@ -229,7 +207,8 @@ class _PracticeScreenState extends State<PracticeScreen>
       nowMs: _nowMs,
       commitStroke: _commitStroke,
       flushPending: _flushPending,
-      base: _base,
+      base:
+          _finalComposite, // only non-null after finish for review context painting
       ctrlDown: _ctrlDown,
       viewportOriginPx: _viewportOriginPx,
       baseWidthPx: _baseWidthPx,
@@ -259,11 +238,6 @@ class _PracticeScreenState extends State<PracticeScreen>
       return true;
     }());
 
-    if (_base == null) {
-      _initBase(reqW, reqH);
-      return;
-    }
-
     if (reqW > _baseWidthPx || reqH > _baseHeightPx) {
       // Grow only upward (never shrink).
       _pendingGrowW = math.max(reqW, _baseWidthPx);
@@ -291,23 +265,7 @@ class _PracticeScreenState extends State<PracticeScreen>
       _pendingGrowW = _pendingGrowH = null;
       return;
     }
-    final old = _base; // keep reference for deferred disposal
-    final rec = ui.PictureRecorder();
-    final canvas = ui.Canvas(
-      rec,
-      ui.Rect.fromLTWH(0, 0, newW.toDouble(), newH.toDouble()),
-    );
-    if (old != null) {
-      canvas.drawImage(old, ui.Offset.zero, ui.Paint());
-    }
-    final pic = rec.endRecording();
-    final grown = await pic.toImage(newW, newH);
-    // Swap first, then dispose old after frame to avoid transient reads of
-    // a disposed image by ongoing pointer handlers querying size.
-    _base = grown;
-    if (old != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
-    }
+    // Tiles are sparse; no need to reallocate. Just update dimensions.
     _baseWidthPx = newW;
     _baseHeightPx = newH;
     _pendingGrowW = _pendingGrowH = null;
@@ -316,15 +274,10 @@ class _PracticeScreenState extends State<PracticeScreen>
 
   Widget _buildClearFab() => FloatingActionButton.extended(
     onPressed: () async {
-      if (_base == null) return;
       _pending.clear();
-      engine.live.clear();
-      engine.resetStroke();
-      // Recreate base matching current viewport (grow target if pending)
-      final w = _pendingGrowW ?? _baseWidthPx;
-      final h = _pendingGrowH ?? _baseHeightPx;
-      await _initBase(w, h);
+      engine.clearAll();
       _pendingGrowW = _pendingGrowH = null;
+      setState(() {});
     },
     label: const Text('Clear'),
     icon: const Icon(Icons.undo),
@@ -340,7 +293,8 @@ class _CanvasArea extends StatefulWidget {
   final int Function() nowMs;
   final Future<void> Function() commitStroke;
   final VoidCallback flushPending;
-  final ui.Image? base;
+  final ui.Image?
+  base; // only populated after finish for review screen navigation state
   final bool ctrlDown;
   final Offset viewportOriginPx;
   final int baseWidthPx;
@@ -428,8 +382,9 @@ class _CanvasAreaState extends State<_CanvasArea> {
             animation: widget.engine,
             builder: (context, child) => CustomPaint(
               painter: _PracticePainter(
-                widget.base,
-                widget.engine.live,
+                base: widget.base,
+                live: widget.engine.live,
+                engine: widget.engine,
                 devicePixelRatio: dpr,
                 viewportOriginPx: widget.viewportOriginPx,
                 viewWidthPx: viewWidthPx,
@@ -480,13 +435,14 @@ class _CanvasAreaState extends State<_CanvasArea> {
 
   void _addPoint(PointerEvent e, Size logicalSize, {bool reset = false}) {
     if (reset) widget.engine.resetStroke();
-    final base = widget.base;
-    if (base == null) return;
     final dpr = widget.devicePixelRatio;
     final imgX = widget.viewportOriginPx.dx + e.localPosition.dx * dpr;
     final imgY = widget.viewportOriginPx.dy + e.localPosition.dy * dpr;
-    if (imgX < 0 || imgY < 0 || imgX >= base.width || imgY >= base.height) {
-      return; // safety
+    if (imgX < 0 ||
+        imgY < 0 ||
+        imgX >= widget.baseWidthPx ||
+        imgY >= widget.baseHeightPx) {
+      return; // outside canvas bounds
     }
     widget.pending.add(
       InputPoint(imgX, imgY, widget.pressure(e), widget.nowMs()),
@@ -593,15 +549,17 @@ class _BrushSlidersState extends State<_BrushSliders> {
 }
 
 class _PracticePainter extends CustomPainter {
-  final ui.Image? base;
-  final StrokeLayer live;
+  final ui.Image? base; // final composite only after finish
+  final StrokeLayer live; // live stroke tail
+  final BrushEngine engine; // provides tiled committed strokes
   final double devicePixelRatio;
   final Offset viewportOriginPx;
   final int viewWidthPx;
   final int viewHeightPx;
-  _PracticePainter(
-    this.base,
-    this.live, {
+  _PracticePainter({
+    required this.base,
+    required this.live,
+    required this.engine,
     required this.devicePixelRatio,
     required this.viewportOriginPx,
     required this.viewWidthPx,
@@ -611,11 +569,7 @@ class _PracticePainter extends CustomPainter {
   void paint(ui.Canvas canvas, ui.Size size) {
     // Fill visible region with paper color in case base is smaller / panned.
     canvas.drawRect(Offset.zero & size, ui.Paint()..color = kPaperColor);
-    final baseImage = base;
-    if (baseImage == null) {
-      // Nothing yet
-      return;
-    }
+    final baseImage = base; // null while drawing
     canvas.save();
     // Scale down so that image pixels map 1:1 to device pixels (logical coords scaled by dpr later by engine)
     final inv = 1 / devicePixelRatio;
@@ -623,11 +577,11 @@ class _PracticePainter extends CustomPainter {
     // Translate so viewport origin becomes (0,0) in logical space after scale
     canvas.translate(-viewportOriginPx.dx, -viewportOriginPx.dy);
     // Draw base full-res (no filter scaling happening)
-    canvas.drawImage(
-      baseImage,
-      ui.Offset.zero,
-      ui.Paint()..filterQuality = FilterQuality.none,
-    );
+    if (baseImage != null) {
+      canvas.drawImage(baseImage, ui.Offset.zero, ui.Paint());
+    } else {
+      engine.tiles.draw(canvas);
+    }
     // Draw live dabs in image pixel space
     live.draw(canvas);
     canvas.restore();

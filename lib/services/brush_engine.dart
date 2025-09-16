@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
+import 'tiled_surface.dart';
 
 // ---------------------------------------------------------------------------
 // Brush Engine (single soft round brush)
@@ -229,7 +230,9 @@ class BrushEngine extends ChangeNotifier {
   // sampling artifacts. This is simpler for the beginner phase; we can re-add
   // a sprite path later for exotic shapes or performance profiling if needed.
   final BrushParams params;
-  final StrokeLayer live = StrokeLayer(); // Holds dabs for active stroke
+  final StrokeLayer live =
+      StrokeLayer(); // Holds dabs for active stroke (tail only once tiled baking active)
+  final TiledSurface tiles = TiledSurface(tileSize: 256);
   final OneEuro _fx = OneEuro(); // X smoothing
   final OneEuro _fy = OneEuro(); // Y smoothing
   final OneEuro _fp = OneEuro()
@@ -278,6 +281,14 @@ class BrushEngine extends ChangeNotifier {
     _lastX = null;
     _lastY = null;
     live.clear();
+  }
+
+  /// Clear all stroke data (live + committed tiles) and notify listeners so
+  /// the UI repaints immediately (used by Clear button).
+  void clearAll() {
+    resetStroke();
+    tiles.clear();
+    notifyListeners();
   }
 
   // Convert filtered points to dabs with consistent spacing. Interpolate
@@ -345,6 +356,41 @@ class BrushEngine extends ChangeNotifier {
       live.add(d);
     }
     if (pts.isNotEmpty) notifyListeners();
+  }
+
+  /// Bake current live dabs into tiles and clear live list. Called once per frame
+  /// after all new points have been added so cost stays evenly distributed.
+  Future<void> bakeLiveToTiles() async {
+    if (live._dabs.isEmpty) return;
+    // Convert each dab into pending tile work.
+    final strokeColor = BrushEngine.currentColor;
+    // Pre-multiply color per dab alpha.
+    for (final d in live._dabs) {
+      final a = (d.alpha * 255).clamp(0, 255).round();
+      if (a == 0) continue;
+      final color = ui.Color.fromARGB(
+        a,
+        (strokeColor.r * 255).round().clamp(0, 255),
+        (strokeColor.g * 255).round().clamp(0, 255),
+        (strokeColor.b * 255).round().clamp(0, 255),
+      );
+      tiles.addDab(d.center, d.radius, color);
+    }
+    live.clear();
+    // Flush asynchronously; caller may await if they need deterministic completion.
+    await tiles.flush();
+    notifyListeners();
+  }
+
+  /// Compose a full image (used when finishing session). Draws tiles then optional live tail.
+  Future<ui.Image> renderFull(int width, int height) async {
+    // Ensure any remaining live dabs baked first for consistency.
+    await bakeLiveToTiles();
+    return tiles.toImage(width, height);
+  }
+
+  void disposeResources() {
+    tiles.dispose();
   }
 }
 
