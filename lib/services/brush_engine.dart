@@ -47,15 +47,15 @@ class BrushParams {
 
   const BrushParams({
     // Loose construction sketch defaults (SAI-like)
-    this.sizePx = 50.0,
-    this.spacing = 0.05,
-    this.flow = 1.0,
+    this.sizePx = 10,
+    this.spacing = 0.18,
+    this.flow = 0.65,
     this.minFlow = 0.05,
     this.maxFlowPressure = 0.85,
     this.minSizePct = 0.05,
     this.sizeGamma = 0.6,
     this.flowGamma = 1.0,
-    this.hardness = 1.0,
+    this.hardness = 0.2,
     this.opacity = 1.0,
     this.color = const ui.Color(0xFF111115),
   });
