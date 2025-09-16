@@ -220,9 +220,10 @@ class _PracticeScreenState extends State<PracticeScreen>
         final rawCanvasLogicalW =
             constraints.maxWidth * _kWideCanvasFraction - _kDividerThickness;
         final snappedCanvasLogicalW = _snapLogical(rawCanvasLogicalW, dpr);
+        final snappedCanvasLogicalH = _snapLogical(constraints.maxHeight, dpr);
         final refLogicalW =
             constraints.maxWidth - _kDividerThickness - snappedCanvasLogicalW;
-        canvasLogical = Size(snappedCanvasLogicalW, constraints.maxHeight);
+        canvasLogical = Size(snappedCanvasLogicalW, snappedCanvasLogicalH);
 
         layout = Row(
           children: [
@@ -238,10 +239,11 @@ class _PracticeScreenState extends State<PracticeScreen>
       } else {
         final rawCanvasLogicalH =
             constraints.maxHeight * _kWideCanvasFraction - _kDividerThickness;
+        final snappedCanvasLogicalW = _snapLogical(constraints.maxWidth, dpr);
         final snappedCanvasLogicalH = _snapLogical(rawCanvasLogicalH, dpr);
         final refLogicalH =
             constraints.maxHeight - _kDividerThickness - snappedCanvasLogicalH;
-        canvasLogical = Size(constraints.maxWidth, snappedCanvasLogicalH);
+        canvasLogical = Size(snappedCanvasLogicalW, snappedCanvasLogicalH);
 
         layout = Column(
           children: [
