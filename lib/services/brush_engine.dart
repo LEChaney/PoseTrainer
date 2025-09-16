@@ -105,6 +105,10 @@ class OneEuro {
   _LowPass _x = _LowPass();
   _LowPass _dx = _LowPass();
   int? _lastMs;
+  int _samples = 0; // Count of processed samples for warmup
+  int warmupSamples =
+      2; // Emit first N samples unsmoothed to avoid initial kink
+  double maxDerivative = 4000; // Clamp derivative magnitude to suppress spikes
 
   double filter(double value, int tMs) {
     if (_lastMs != null) {
@@ -112,7 +116,21 @@ class OneEuro {
       freq = 1000.0 / dt; // Update frequency based on sample spacing
     }
     _lastMs = tMs;
-    final ed = _dx.filter((value - _x.last) * freq, _alpha(dCutoff));
+    // Warmup: output raw value for first few samples (primes filters)
+    if (_samples < warmupSamples) {
+      _samples++;
+      _x.prime(value); // Prime position filter
+      _dx.prime(0); // Prime derivative filter
+      return value;
+    }
+    var deriv = (value - _x.last) * freq;
+    // Clamp derivative to avoid sudden huge beta amplification causing a kink
+    if (deriv > maxDerivative) {
+      deriv = maxDerivative;
+    } else if (deriv < -maxDerivative) {
+      deriv = -maxDerivative;
+    }
+    final ed = _dx.filter(deriv, _alpha(dCutoff));
     final cutoff = minCutoff + beta * ed.abs();
     return _x.filter(value, _alpha(cutoff));
   }
@@ -127,6 +145,7 @@ class OneEuro {
     _lastMs = null;
     _x = _LowPass();
     _dx = _LowPass();
+    _samples = 0;
   }
 }
 
@@ -141,6 +160,11 @@ class _LowPass {
     }
     _y = _y + a.clamp(0, 1) * (x - _y);
     return _y;
+  }
+
+  void prime(double x) {
+    _y = x;
+    _init = true;
   }
 }
 
