@@ -37,6 +37,8 @@ dependencies:
   cached_network_image: ^3.4.1
   # HTTP client for e621 tag and image fetches
   http: ^1.2.2
+  # Vector math utilities (Vector2, lerp, etc.) for cleaner geometry code
+  vector_math: ^2.1.4
   # Cupertino icons
   cupertino_icons: ^1.0.8
 

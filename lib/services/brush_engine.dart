@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
+import 'package:vector_math/vector_math_64.dart'
+    show Vector2; // Unified 2D math
 import 'tiled_surface.dart';
 
 // ---------------------------------------------------------------------------
@@ -94,6 +96,9 @@ class InputPoint {
   final double x, y, pressure; // Normalized pressure 0..1
   final int tMs; // Millisecond timestamp used to estimate frequency
   const InputPoint(this.x, this.y, this.pressure, this.tMs);
+
+  /// Convenience vector view (allocation free for ephemeral calculations).
+  Vector2 toV() => Vector2(x, y);
 }
 
 class OneEuro {
@@ -231,6 +236,50 @@ class PredictiveAxisSmoother {
 
 enum SmoothingMode { none, oneEuro, predictive }
 
+/// Abstract 2D position smoothing interface.
+abstract class PositionSmoother {
+  Vector2 filter(Vector2 v, int tMs);
+  void reset();
+}
+
+/// Pass-through (no smoothing) implementation.
+class PassthroughSmoother implements PositionSmoother {
+  @override
+  Vector2 filter(Vector2 v, int tMs) => v;
+  @override
+  void reset() {}
+}
+
+/// 2D One-Euro smoother built from two scalar filters (still cleaner than
+/// scattering scalars in BrushEngine). Keeps public API vector-based.
+class OneEuroSmoother2D implements PositionSmoother {
+  final OneEuro _sx = OneEuro();
+  final OneEuro _sy = OneEuro();
+  @override
+  Vector2 filter(Vector2 v, int tMs) =>
+      Vector2(_sx.filter(v.x, tMs), _sy.filter(v.y, tMs));
+  @override
+  void reset() {
+    _sx.reset();
+    _sy.reset();
+  }
+}
+
+/// Predictive 2D smoother; mirrors prior PredictiveAxisSmoother logic but
+/// applies it per component while exposing vector API. Allows future coupling.
+class PredictiveSmoother2D implements PositionSmoother {
+  final PredictiveAxisSmoother _px = PredictiveAxisSmoother();
+  final PredictiveAxisSmoother _py = PredictiveAxisSmoother();
+  @override
+  Vector2 filter(Vector2 v, int tMs) =>
+      Vector2(_px.filter(v.x, tMs), _py.filter(v.y, tMs));
+  @override
+  void reset() {
+    _px.reset();
+    _py.reset();
+  }
+}
+
 class _LowPass {
   double _y = 0; // Last filtered value
   bool _init = false;
@@ -339,14 +388,12 @@ class BrushEngine extends ChangeNotifier {
   final StrokeLayer live =
       StrokeLayer(); // Holds dabs for active stroke (tail only once tiled baking active)
   final TiledSurface tiles = TiledSurface(tileSize: 256);
-  final OneEuro _fx = OneEuro(); // X smoothing
-  final OneEuro _fy = OneEuro(); // Y smoothing
   final OneEuro _fp = OneEuro()
     ..beta = 0.02; // Pressure smoothing (slightly faster)
-  final PredictiveAxisSmoother _px = PredictiveAxisSmoother();
-  final PredictiveAxisSmoother _py = PredictiveAxisSmoother();
   SmoothingMode positionMode = SmoothingMode.predictive;
-  double? _lastX, _lastY; // Last dab center to enforce spacing
+  // Unified 2D position smoother (strategy selected by mode).
+  PositionSmoother _posSmoother = PredictiveSmoother2D();
+  Vector2? _lastDabPos; // Last dab center to enforce spacing (null => none yet)
   // Corner detection raw history (unsmoothed)
   InputPoint? _rawPrev1; // most recent previous
   InputPoint? _rawPrev2; // older
@@ -394,13 +441,9 @@ class BrushEngine extends ChangeNotifier {
 
   // Reset state at stroke start.
   void resetStroke() {
-    _fx.reset();
-    _fy.reset();
+    _posSmoother.reset();
     _fp.reset();
-    _px.reset();
-    _py.reset();
-    _lastX = null;
-    _lastY = null;
+    _lastDabPos = null;
     _rawPrev1 = null;
     _rawPrev2 = null;
     live.clear();
@@ -418,24 +461,19 @@ class BrushEngine extends ChangeNotifier {
   // intermediate dabs when distance > spacing to avoid gaps.
   Iterable<Dab> _emit(Iterable<InputPoint> raw) sync* {
     for (final p in raw) {
-      // Estimate local curvature using last two raw points (if present).
-      double blend = 1.0; // 1 => use filtered, 0 => use raw
+      // --- Curvature-adaptive smoothing blend ---------------------------------
+      double blend = 1.0; // 1 => rely on filtered movement, 0 => raw
       if (_rawPrev1 != null && _rawPrev2 != null) {
-        final p1 = _rawPrev2!; // older
-        final p2 = _rawPrev1!; // previous
-        final v1x = p2.x - p1.x;
-        final v1y = p2.y - p1.y;
-        final v2x = p.x - p2.x;
-        final v2y = p.y - p2.y;
-        final len1 = math.sqrt(v1x * v1x + v1y * v1y);
-        final len2 = math.sqrt(v2x * v2x + v2y * v2y);
+        final v1 = Vector2(
+          _rawPrev1!.x - _rawPrev2!.x,
+          _rawPrev1!.y - _rawPrev2!.y,
+        );
+        final v2 = Vector2(p.x - _rawPrev1!.x, p.y - _rawPrev1!.y);
+        final len1 = v1.length;
+        final len2 = v2.length;
         if (len1 > 0.0001 && len2 > 0.0001) {
-          var dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
-          if (dot < -1)
-            dot = -1;
-          else if (dot > 1)
-            dot = 1;
-          final angle = math.acos(dot); // 0 straight
+          final dot = (v1.dot(v2) / (len1 * len2)).clamp(-1.0, 1.0);
+          final angle = math.acos(dot); // radians
           // Map angle to blend: low angle => 1 (filtered), high angle => 0 (raw)
           if (angle <= curvatureMin) {
             blend = 1.0;
@@ -449,24 +487,13 @@ class BrushEngine extends ChangeNotifier {
         }
       }
 
-      // Always advance filters so state continuity maintained.
-      double fx, fy;
-      switch (positionMode) {
-        case SmoothingMode.none:
-          fx = p.x;
-          fy = p.y;
-          break;
-        case SmoothingMode.oneEuro:
-          fx = _fx.filter(p.x, p.tMs);
-          fy = _fy.filter(p.y, p.tMs);
-          break;
-        case SmoothingMode.predictive:
-          fx = _px.filter(p.x, p.tMs);
-          fy = _py.filter(p.y, p.tMs);
-          break;
-      }
-      final sx = fx * blend + p.x * (1 - blend);
-      final sy = fy * blend + p.y * (1 - blend);
+      // --- Position smoothing (choose strategy then blend with raw) ---------
+      final rawV = p.toV();
+      // Choose smoothing strategy via current _posSmoother; blend curvature adaptively.
+      final smoothed = _posSmoother.filter(rawV, p.tMs);
+      final filtered = smoothed * blend + rawV * (1 - blend);
+
+      // --- Pressure to size / flow curves -----------------------------------
       final sp = _fp.filter(p.pressure.clamp(0, 1), p.tMs).clamp(0, 1);
       // Size pressure curve (gamma <1 => aggressive early growth)
       final sizeCurve = math.pow(sp, params.sizeGamma).toDouble();
@@ -486,36 +513,36 @@ class BrushEngine extends ChangeNotifier {
           (params.minFlow + (baseFlow - params.minFlow) * _runtimeFlowScale)
               .clamp(0.0, 1.0);
 
-      // First dab: always emit at filtered position.
-      if (_lastX == null) {
-        _lastX = sx;
-        _lastY = sy;
-        yield Dab(ui.Offset(sx, sy), diameter * 0.5, flow * params.opacity);
+      // --- Emit first dab immediately ---------------------------------------
+      if (_lastDabPos == null) {
+        _lastDabPos = filtered.clone();
+        yield Dab(
+          ui.Offset(filtered.x, filtered.y),
+          diameter * 0.5,
+          flow * params.opacity,
+        );
         continue;
       }
 
-      var dx = sx - _lastX!;
-      var dy = sy - _lastY!;
-      final dist = math.sqrt(dx * dx + dy * dy);
+      // --- Distance & interpolation via Vector2 -----------------------------
+      final lastPos = _lastDabPos!;
+      final delta = filtered - lastPos;
+      final dist = delta.length;
       if (dist < spacingPx) {
-        // Not far enough to place next dab yet.
-        continue;
+        continue; // not far enough yet
       }
-
-      // Normalize direction for interpolation.
-      final dirX = dx / dist;
-      final dirY = dy / dist;
+      final dir = delta / dist; // normalized
       var traveled = spacingPx;
       while (traveled <= dist) {
-        final ix = _lastX! + dirX * traveled;
-        final iy = _lastY! + dirY * traveled;
-        yield Dab(ui.Offset(ix, iy), diameter * 0.5, flow * params.opacity);
+        final pos = lastPos + dir * traveled;
+        yield Dab(
+          ui.Offset(pos.x, pos.y),
+          diameter * 0.5,
+          flow * params.opacity,
+        );
         traveled += spacingPx;
       }
-      // Update last emitted dab center to final point so future distance calc
-      // uses the newest position even if we skipped a residual fraction.
-      _lastX = sx;
-      _lastY = sy;
+      _lastDabPos = filtered.clone();
     }
   }
 
@@ -574,12 +601,19 @@ class BrushEngine extends ChangeNotifier {
     if (positionMode == mode) return;
     positionMode = mode;
     // Reset stroke state so switching is immediate and artifact free.
-    _lastX = null;
-    _lastY = null;
-    _fx.reset();
-    _fy.reset();
-    _px.reset();
-    _py.reset();
+    _lastDabPos = null;
+    switch (positionMode) {
+      case SmoothingMode.none:
+        _posSmoother = PassthroughSmoother();
+        break;
+      case SmoothingMode.oneEuro:
+        _posSmoother = OneEuroSmoother2D();
+        break;
+      case SmoothingMode.predictive:
+        _posSmoother = PredictiveSmoother2D();
+        break;
+    }
+    _posSmoother.reset();
     notifyListeners();
   }
 }
