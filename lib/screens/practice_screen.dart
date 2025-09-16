@@ -110,18 +110,26 @@ class _PracticeScreenState extends State<PracticeScreen>
     // Merge current live stroke (dabs) onto the backing image.
     if (_base == null) return;
     _flushPending();
-    final w = _base!.width, h = _base!.height;
+    final previous = _base!; // retain old reference; do NOT dispose yet.
+    final w = previous.width, h = previous.height;
     final rec = ui.PictureRecorder();
     final canvas = ui.Canvas(
       rec,
       ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
     );
-    canvas.drawImage(_base!, ui.Offset.zero, ui.Paint());
-    engine.live.draw(canvas); // Composite live dabs.
+    // Draw previous base first.
+    canvas.drawImage(previous, ui.Offset.zero, ui.Paint());
+    // Composite live dabs on top.
+    engine.live.draw(canvas);
     final pic = rec.endRecording();
     final merged = await pic.toImage(w, h);
-    _base!.dispose(); // Free old image memory.
+    // Swap to new image before scheduling disposal of old to avoid a tiny race
+    // where pointer events arriving between dispose() and assignment would
+    // still read width/height from a disposed image (seen on web canvaskit).
     _base = merged;
+    // Defer disposal to end of frame so any in-flight events using the old
+    // image complete safely.
+    WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
     engine.live.clear();
     setState(() {}); // Repaint with committed state.
   }
@@ -331,7 +339,7 @@ class _PracticeScreenState extends State<PracticeScreen>
       _pendingGrowW = _pendingGrowH = null;
       return;
     }
-    final old = _base;
+    final old = _base; // keep reference for deferred disposal
     final rec = ui.PictureRecorder();
     final canvas = ui.Canvas(
       rec,
@@ -342,8 +350,12 @@ class _PracticeScreenState extends State<PracticeScreen>
     }
     final pic = rec.endRecording();
     final grown = await pic.toImage(newW, newH);
-    old?.dispose();
+    // Swap first, then dispose old after frame to avoid transient reads of
+    // a disposed image by ongoing pointer handlers querying size.
     _base = grown;
+    if (old != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    }
     _baseWidthPx = newW;
     _baseHeightPx = newH;
     _pendingGrowW = _pendingGrowH = null;
