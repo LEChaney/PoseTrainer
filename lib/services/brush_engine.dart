@@ -351,26 +351,24 @@ class StrokeLayer {
         final sigma =
             (haloR - coreR).clamp(0.0, dab.radius) *
             0.9; // soften outer falloff
-        final c = BrushEngine.currentColor;
         haloPaint
           ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, sigma)
           ..color = ui.Color.fromARGB(
             (a * haloAlpha).round(),
-            (c.r * 255).round().clamp(0, 255),
-            (c.g * 255).round().clamp(0, 255),
-            (c.b * 255).round().clamp(0, 255),
+            255,
+            255,
+            255,
           );
         canvas.drawCircle(dab.center, coreR + (haloR - coreR) * 0.5, haloPaint);
       }
       // Core: full brightness (alpha) with sharp(er) edge (AA only)
-      final c2 = BrushEngine.currentColor;
       corePaint
         ..maskFilter = null
         ..color = ui.Color.fromARGB(
           a,
-          (c2.r * 255).round().clamp(0, 255),
-          (c2.g * 255).round().clamp(0, 255),
-          (c2.b * 255).round().clamp(0, 255),
+          255,
+          255,
+          255,
         );
       canvas.drawCircle(dab.center, coreR, corePaint);
     }
@@ -566,16 +564,15 @@ class BrushEngine extends ChangeNotifier {
   Future<void> bakeLiveToTiles() async {
     if (live._dabs.isEmpty) return;
     // Convert each dab into pending tile work.
-    final strokeColor = BrushEngine.currentColor;
     // Pre-multiply color per dab alpha.
     for (final d in live._dabs) {
       final a = (d.alpha * 255).clamp(0, 255).round();
       if (a == 0) continue;
       final color = ui.Color.fromARGB(
         a,
-        (strokeColor.r * 255).round().clamp(0, 255),
-        (strokeColor.g * 255).round().clamp(0, 255),
-        (strokeColor.b * 255).round().clamp(0, 255),
+        255,
+        255,
+        255,
       );
       tiles.addDab(d.center, d.radius, color);
     }
@@ -589,7 +586,21 @@ class BrushEngine extends ChangeNotifier {
   Future<ui.Image> renderFull(int width, int height) async {
     // Ensure any remaining live dabs baked first for consistency.
     await bakeLiveToTiles();
-    return tiles.toImage(width, height);
+    // Compose tiles as mask, then tint with current color to produce final image.
+    final rect = ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble());
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder, rect);
+    // Build mask layer
+    canvas.saveLayer(rect, ui.Paint());
+    tiles.draw(canvas); // white-alpha mask
+    // Apply tint
+    final tintPaint = ui.Paint()
+      ..blendMode = ui.BlendMode.srcIn
+      ..color = BrushEngine.currentColor.withAlpha(255);
+    canvas.drawRect(rect, tintPaint);
+    canvas.restore();
+    final pic = recorder.endRecording();
+    return pic.toImage(width, height);
   }
 
   void disposeResources() {
