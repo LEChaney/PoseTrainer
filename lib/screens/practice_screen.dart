@@ -326,6 +326,8 @@ class _CanvasAreaState extends State<_CanvasArea> {
   Offset? _lastPanPos;
   final Map<int, Offset> _touchPoints = {};
   bool _multiPan = false;
+  // For improved two-finger pan: record image-space anchors for each pointer
+  final Map<int, Offset> _multiPanImagePoints = {};
 
   @override
   Widget build(BuildContext context) {
@@ -340,7 +342,18 @@ class _CanvasAreaState extends State<_CanvasArea> {
           onPointerDown: (e) async {
             if (e.kind == PointerDeviceKind.touch) {
               _touchPoints[e.pointer] = e.localPosition;
-              if (_touchPoints.length == 2) _multiPan = true;
+              if (_touchPoints.length == 2) {
+                _multiPan = true;
+                // Capture image-space locations under each finger so we can
+                // compute a viewport that keeps those pixels under the fingers
+                // (feels like pushing a paper with two fingers).
+                final dpr = widget.devicePixelRatio;
+                _multiPanImagePoints.clear();
+                for (final entry in _touchPoints.entries) {
+                  final imgPt = widget.viewportOriginPx + entry.value * dpr;
+                  _multiPanImagePoints[entry.key] = imgPt;
+                }
+              }
             }
             if (widget.ctrlDown || _multiPan) {
               _lastPanPos = e.localPosition;
@@ -355,7 +368,11 @@ class _CanvasAreaState extends State<_CanvasArea> {
               _touchPoints[e.pointer] = e.localPosition;
             }
             if (widget.ctrlDown || _multiPan) {
-              _handlePanMove(e, logicalSize, viewWidthPx, viewHeightPx);
+              if (_multiPan && e.kind == PointerDeviceKind.touch) {
+                _handleTwoFingerPan(logicalSize, viewWidthPx, viewHeightPx);
+              } else {
+                _handlePanMove(e, logicalSize, viewWidthPx, viewHeightPx);
+              }
             } else {
               _addPoint(e, logicalSize);
             }
@@ -363,7 +380,10 @@ class _CanvasAreaState extends State<_CanvasArea> {
           onPointerUp: (e) async {
             if (e.kind == PointerDeviceKind.touch) {
               _touchPoints.remove(e.pointer);
-              if (_touchPoints.length < 2) _multiPan = false;
+              if (_touchPoints.length < 2) {
+                _multiPan = false;
+                _multiPanImagePoints.clear();
+              }
             }
             if (!(widget.ctrlDown || _multiPan)) {
               widget.flushPending();
@@ -431,6 +451,34 @@ class _CanvasAreaState extends State<_CanvasArea> {
         .toDouble();
     origin = Offset(origin.dx.clamp(0.0, maxX), origin.dy.clamp(0.0, maxY));
     widget.onViewportChange(origin);
+  }
+
+  void _handleTwoFingerPan(Size logicalSize, int viewW, int viewH) {
+    // Compute desired viewport origins that would keep each finger anchored
+    // to its starting image pixel, then average them. This keeps both
+    // fingers roughly over the same pixels (feels like pushing paper).
+    if (_multiPanImagePoints.isEmpty) return;
+    final dpr = widget.devicePixelRatio;
+    final origins = <Offset>[];
+    for (final entry in _multiPanImagePoints.entries) {
+      final pointerId = entry.key;
+      final imagePt = entry.value;
+      final local = _touchPoints[pointerId];
+      if (local == null) continue; // pointer lifted mid-gesture
+      final desiredOrigin = imagePt - local * dpr;
+      origins.add(desiredOrigin);
+    }
+    if (origins.isEmpty) return;
+    var avg = origins.reduce((a, b) => a + b) / origins.length.toDouble();
+    // Clamp within base
+    final maxX = (widget.baseWidthPx - viewW)
+        .clamp(0, widget.baseWidthPx)
+        .toDouble();
+    final maxY = (widget.baseHeightPx - viewH)
+        .clamp(0, widget.baseHeightPx)
+        .toDouble();
+    avg = Offset(avg.dx.clamp(0.0, maxX), avg.dy.clamp(0.0, maxY));
+    widget.onViewportChange(avg);
   }
 
   void _addPoint(PointerEvent e, Size logicalSize, {bool reset = false}) {

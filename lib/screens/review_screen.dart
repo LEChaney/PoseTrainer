@@ -1,6 +1,8 @@
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import '../theme/colors.dart';
 import '../widgets/letterboxed_image.dart';
 import '../widgets/reference_draw_split.dart';
@@ -107,16 +109,18 @@ class _ReviewScreenState extends State<ReviewScreen> {
     // 3. URL-only + side-by-side -> fallback.
     // 4. Decoded + side-by-side -> decoded compare.
     if (overlay) {
+      // Wrap overlay modes in an interactive container that supports
+      // pinch-to-zoom, two-finger pan, ctrl+drag pan, and ctrl+wheel zoom.
       if (widget.reference == null && widget.referenceUrl != null) {
-        return _UrlOverlayCompare(
-          refUrl: widget.referenceUrl!,
+        return _InteractiveUrlOverlay(
+          refChild: Image.network(widget.referenceUrl!, fit: BoxFit.contain),
           drawImg: widget.drawing,
           refOpacity: refOpacity,
           drawOpacity: drawOpacity,
         );
       }
       if (widget.reference != null) {
-        return _OverlayCompare(
+        return _InteractiveDecodedOverlay(
           refImg: widget.reference!,
           drawImg: widget.drawing,
           refOpacity: refOpacity,
@@ -137,23 +141,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 }
 
-class _OverlayCompare extends StatelessWidget {
-  final ui.Image refImg, drawImg;
-  final double refOpacity, drawOpacity;
-  const _OverlayCompare({
-    required this.refImg,
-    required this.drawImg,
-    required this.refOpacity,
-    required this.drawOpacity,
-  });
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _OverlayPainter(refImg, drawImg, refOpacity, drawOpacity),
-      size: Size.infinite,
-    );
-  }
-}
+// overlay painter below handles decoded overlay painting when needed.
 
 // Displays a decoded ui.Image scaled to fit while preserving aspect ratio with optional opacity.
 // Removed _FittedImage in favor of shared LetterboxedImage.
@@ -183,6 +171,7 @@ class _OpacitySlider extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _OverlayPainter extends CustomPainter {
   final ui.Image refImg, drawImg;
   final double refOpacity, drawOpacity;
@@ -248,37 +237,388 @@ class _OverlayPainter extends CustomPainter {
 // Overlay for URL-only reference (no decoded pixels). We simply stack the
 // network image and drawing image; no per-pixel operations (color pick, diff)
 // are possible in this path.
-class _UrlOverlayCompare extends StatelessWidget {
-  final String refUrl;
+// URL-overlay legacy implementation removed; interactive variant below.
+
+// Interactive overlay that keeps the reference fixed and only transforms
+// the drawing layer. This is the desired behavior for users overlaying
+// their drawing to match the reference.
+class _InteractiveDecodedOverlay extends StatefulWidget {
+  final ui.Image refImg;
   final ui.Image drawImg;
   final double refOpacity, drawOpacity;
-  const _UrlOverlayCompare({
-    required this.refUrl,
+  const _InteractiveDecodedOverlay({
+    required this.refImg,
     required this.drawImg,
     required this.refOpacity,
     required this.drawOpacity,
   });
   @override
+  State<_InteractiveDecodedOverlay> createState() =>
+      _InteractiveDecodedOverlayState();
+}
+
+class _InteractiveDecodedOverlayState
+    extends State<_InteractiveDecodedOverlay> {
+  double _scale = 1.0;
+  Offset _offset = Offset.zero;
+  double _baseScale = 1.0;
+  Offset _baseOffset = Offset.zero;
+  Offset? _startFocal;
+  bool _mousePanning = false;
+  Offset? _lastMousePos;
+
+  static const double _minScale = 0.2;
+  static const double _maxScale = 10.0;
+
+  void _onScaleStart(ScaleStartDetails details) {
+    _baseScale = _scale;
+    _baseOffset = _offset;
+    _startFocal = details.focalPoint;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    if (_startFocal == null) _startFocal = details.focalPoint;
+    final s = details.scale;
+    final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
+    final anchor = details.focalPoint;
+    final newOffset = anchor - (_startFocal! - _baseOffset) * s;
+    setState(() {
+      _scale = newScale;
+      _offset = newOffset;
+    });
+  }
+
+  void _onScaleEnd(ScaleEndDetails _) {
+    _startFocal = null;
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent) {
+      final isCtrl = HardwareKeyboard.instance.isControlPressed;
+      if (!isCtrl) return;
+      final focal = event.localPosition;
+      final delta = event.scrollDelta.dy;
+      final factor = math.pow(1.0015, -delta);
+      final newScale = (_scale * factor).clamp(_minScale, _maxScale);
+      final scaleRatio = newScale / _scale;
+      final newOffset = focal - (focal - _offset) * scaleRatio;
+      setState(() {
+        _scale = newScale;
+        _offset = newOffset;
+      });
+    }
+  }
+
+  void _onPointerDown(PointerDownEvent e) {
+    final isCtrl = HardwareKeyboard.instance.isControlPressed;
+    if (isCtrl &&
+        e.kind == PointerDeviceKind.mouse &&
+        (e.buttons & kPrimaryButton) != 0) {
+      _mousePanning = true;
+      _lastMousePos = e.position;
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    if (_mousePanning && _lastMousePos != null) {
+      final delta = e.position - _lastMousePos!;
+      setState(() {
+        _offset += delta;
+        _lastMousePos = e.position;
+      });
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent e) {
+    _mousePanning = false;
+    _lastMousePos = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // We cannot know the reference intrinsic size synchronously; using two
-    // independent FittedBox instances with the same fit preserves each aspect
-    // without stretching the drawing relative to the reference. (Unified scale
-    // exactly requires both intrinsic sizes; acceptable compromise here.)
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Opacity(
-          opacity: refOpacity,
-          child: FittedBox(fit: BoxFit.contain, child: Image.network(refUrl)),
+    final drawMatrix = Matrix4.identity()
+      ..translate(_offset.dx, _offset.dy)
+      ..scale(_scale, _scale);
+    return Listener(
+      onPointerSignal: _onPointerSignal,
+      onPointerDown: _onPointerDown,
+      onPointerMove: _onPointerMove,
+      onPointerUp: _onPointerUp,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onScaleStart: _onScaleStart,
+        onScaleUpdate: _onScaleUpdate,
+        onScaleEnd: _onScaleEnd,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Reference fixed
+            Opacity(
+              opacity: widget.refOpacity,
+              child: FittedBox(
+                fit: BoxFit.contain,
+                child: RawImage(image: widget.refImg),
+              ),
+            ),
+            // Drawing transformed
+            Opacity(
+              opacity: widget.drawOpacity,
+              child: Transform(
+                transform: drawMatrix,
+                alignment: Alignment.topLeft,
+                child: FittedBox(
+                  fit: BoxFit.contain,
+                  child: RawImage(image: widget.drawImg),
+                ),
+              ),
+            ),
+          ],
         ),
-        Opacity(
-          opacity: drawOpacity,
-          child: FittedBox(
-            fit: BoxFit.contain,
-            child: RawImage(image: drawImg),
+      ),
+    );
+  }
+}
+
+class _InteractiveUrlOverlay extends StatefulWidget {
+  final Widget refChild; // already built Image widget for network ref
+  final ui.Image drawImg;
+  final double refOpacity, drawOpacity;
+  const _InteractiveUrlOverlay({
+    required this.refChild,
+    required this.drawImg,
+    required this.refOpacity,
+    required this.drawOpacity,
+  });
+  @override
+  State<_InteractiveUrlOverlay> createState() => _InteractiveUrlOverlayState();
+}
+
+class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
+  double _scale = 1.0;
+  Offset _offset = Offset.zero;
+  double _baseScale = 1.0;
+  Offset _baseOffset = Offset.zero;
+  Offset? _startFocal;
+  bool _mousePanning = false;
+  Offset? _lastMousePos;
+
+  static const double _minScale = 0.2;
+  static const double _maxScale = 10.0;
+
+  void _onScaleStart(ScaleStartDetails details) {
+    _baseScale = _scale;
+    _baseOffset = _offset;
+    _startFocal = details.focalPoint;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    if (_startFocal == null) _startFocal = details.focalPoint;
+    final s = details.scale;
+    final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
+    final anchor = details.focalPoint;
+    final newOffset = anchor - (_startFocal! - _baseOffset) * s;
+    setState(() {
+      _scale = newScale;
+      _offset = newOffset;
+    });
+  }
+
+  void _onScaleEnd(ScaleEndDetails _) {
+    _startFocal = null;
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent) {
+      final isCtrl = HardwareKeyboard.instance.isControlPressed;
+      if (!isCtrl) return;
+      final focal = event.localPosition;
+      final delta = event.scrollDelta.dy;
+      final factor = math.pow(1.0015, -delta);
+      final newScale = (_scale * factor).clamp(_minScale, _maxScale);
+      final scaleRatio = newScale / _scale;
+      final newOffset = focal - (focal - _offset) * scaleRatio;
+      setState(() {
+        _scale = newScale;
+        _offset = newOffset;
+      });
+    }
+  }
+
+  void _onPointerDown(PointerDownEvent e) {
+    final isCtrl = HardwareKeyboard.instance.isControlPressed;
+    if (isCtrl &&
+        e.kind == PointerDeviceKind.mouse &&
+        (e.buttons & kPrimaryButton) != 0) {
+      _mousePanning = true;
+      _lastMousePos = e.position;
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    if (_mousePanning && _lastMousePos != null) {
+      final delta = e.position - _lastMousePos!;
+      setState(() {
+        _offset += delta;
+        _lastMousePos = e.position;
+      });
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent e) {
+    _mousePanning = false;
+    _lastMousePos = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final drawMatrix = Matrix4.identity()
+      ..translate(_offset.dx, _offset.dy)
+      ..scale(_scale, _scale);
+    return Listener(
+      onPointerSignal: _onPointerSignal,
+      onPointerDown: _onPointerDown,
+      onPointerMove: _onPointerMove,
+      onPointerUp: _onPointerUp,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onScaleStart: _onScaleStart,
+        onScaleUpdate: _onScaleUpdate,
+        onScaleEnd: _onScaleEnd,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Opacity(opacity: widget.refOpacity, child: widget.refChild),
+            Opacity(
+              opacity: widget.drawOpacity,
+              child: Transform(
+                transform: drawMatrix,
+                alignment: Alignment.topLeft,
+                child: FittedBox(
+                  fit: BoxFit.contain,
+                  child: RawImage(image: widget.drawImg),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Interactive wrapper that adds pan/zoom gesture handling around any
+// overlay widget. It exposes consistent behavior for touch and mouse.
+class _InteractiveOverlay extends StatefulWidget {
+  final Widget child;
+  const _InteractiveOverlay({required this.child});
+  @override
+  State<_InteractiveOverlay> createState() => _InteractiveOverlayState();
+}
+
+class _InteractiveOverlayState extends State<_InteractiveOverlay> {
+  double _scale = 1.0;
+  Offset _offset = Offset.zero;
+  double _baseScale = 1.0;
+  Offset _baseOffset = Offset.zero;
+  Offset? _startFocal;
+  bool _mousePanning = false;
+  Offset? _lastMousePos;
+
+  static const double _minScale = 0.2;
+  static const double _maxScale = 10.0;
+
+  void _onScaleStart(ScaleStartDetails details) {
+    _baseScale = _scale;
+    _baseOffset = _offset;
+    _startFocal = details.focalPoint;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    if (_startFocal == null) _startFocal = details.focalPoint;
+    final s = details.scale;
+    final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
+    // anchor math: offset_t = F_t - s*(F0 - offset0)
+    final anchor = details.focalPoint;
+    final newOffset = anchor - (_startFocal! - _baseOffset) * s;
+    setState(() {
+      _scale = newScale;
+      _offset = newOffset;
+    });
+  }
+
+  void _onScaleEnd(ScaleEndDetails _) {
+    _startFocal = null;
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent) {
+      final isCtrl = HardwareKeyboard.instance.isControlPressed;
+      if (!isCtrl) return;
+      // Zoom around pointer
+      final focal = event.localPosition;
+      final delta = event.scrollDelta.dy;
+      final factor = math.pow(1.0015, -delta);
+      final newScale = (_scale * factor).clamp(_minScale, _maxScale);
+      final scaleRatio = newScale / _scale;
+      // offset_t = focal - scaleRatio*(focal - offset)
+      final newOffset = focal - (focal - _offset) * scaleRatio;
+      setState(() {
+        _scale = newScale;
+        _offset = newOffset;
+      });
+    }
+  }
+
+  void _onPointerDown(PointerDownEvent e) {
+    final isCtrl = HardwareKeyboard.instance.isControlPressed;
+    if (isCtrl &&
+        e.kind == PointerDeviceKind.mouse &&
+        (e.buttons & kPrimaryButton) != 0) {
+      _mousePanning = true;
+      _lastMousePos = e.position;
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    if (_mousePanning && _lastMousePos != null) {
+      final delta = e.position - _lastMousePos!;
+      setState(() {
+        _offset += delta;
+        _lastMousePos = e.position;
+      });
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent e) {
+    _mousePanning = false;
+    _lastMousePos = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final matrix = Matrix4.identity()
+      ..translate(_offset.dx, _offset.dy)
+      ..scale(_scale, _scale);
+    return Focus(
+      child: Listener(
+        onPointerSignal: _onPointerSignal,
+        onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onScaleStart: _onScaleStart,
+          onScaleUpdate: _onScaleUpdate,
+          onScaleEnd: _onScaleEnd,
+          child: ClipRect(
+            child: Transform(
+              transform: matrix,
+              alignment: Alignment.topLeft,
+              child: widget.child,
+            ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
