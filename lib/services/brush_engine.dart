@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:vector_math/vector_math_64.dart'
     show Vector2; // Unified 2D math
 import 'tiled_surface.dart';
+import '../theme/colors.dart';
 
 // ---------------------------------------------------------------------------
 // Brush Engine (single soft round brush)
@@ -30,7 +31,7 @@ class BrushParams {
   final double spacing; // Dab spacing as fraction of diameter
 
   // Opacity (flow) modeling
-  final double flow; // Target (max) per-dab flow at/after maxFlowPressure
+  final double maxFlow; // Target (max) per-dab flow at/after maxFlowPressure
   final double minFlow; // Flow at zero pressure (sketch taper transparency)
   final double
   maxFlowPressure; // Pressure level where "flow" reaches target ( <1 => earlier saturation )
@@ -52,7 +53,7 @@ class BrushParams {
     // Loose construction sketch defaults (SAI-like)
     this.maxSizePx = 100,
     this.spacing = 0.01,
-    this.flow = 1.0,
+    this.maxFlow = 1.0,
     this.minFlow = 0.0,
     this.maxFlowPressure = 1.0,
     this.minScale = 1.0,
@@ -60,16 +61,16 @@ class BrushParams {
     this.flowGamma = 1.0,
     this.hardness = 1.0,
     this.opacity = 1.0,
-    this.color = const ui.Color(0xFF111115),
+    this.color = kBrushDarkDefault,
   });
 
   BrushParams copyWith({
-    double? sizePx,
+    double? maxSizePx,
     double? spacing,
     double? flow,
     double? minFlow,
     double? maxFlowPressure,
-    double? minSizePct,
+    double? minScale,
     double? sizeGamma,
     double? flowGamma,
     double? hardness,
@@ -77,12 +78,12 @@ class BrushParams {
     ui.Color? color,
   }) {
     return BrushParams(
-      maxSizePx: sizePx ?? this.maxSizePx,
+      maxSizePx: maxSizePx ?? this.maxSizePx,
       spacing: spacing ?? this.spacing,
-      flow: flow ?? this.flow,
+      maxFlow: flow ?? this.maxFlow,
       minFlow: minFlow ?? this.minFlow,
       maxFlowPressure: maxFlowPressure ?? this.maxFlowPressure,
-      minScale: minSizePct ?? this.minScale,
+      minScale: minScale ?? this.minScale,
       sizeGamma: sizeGamma ?? this.sizeGamma,
       flowGamma: flowGamma ?? this.flowGamma,
       hardness: hardness ?? this.hardness,
@@ -410,7 +411,7 @@ class BrushEngine extends ChangeNotifier {
   }
 
   // Current stroke color (shared with StrokeLayer draw). For now single global.
-  static ui.Color _strokeColorFallback = const ui.Color(0xFF111115);
+  static ui.Color _strokeColorFallback = kBrushDarkDefault;
   static ui.Color get currentColor => _strokeColorFallback;
   void setColor(ui.Color c) {
     _strokeColorFallback = c;
@@ -419,8 +420,8 @@ class BrushEngine extends ChangeNotifier {
 
   // Runtime multipliers (temporary before full preset UI). These *only*
   // scale size and flow curves; base param object stays immutable.
-  double _runtimeSizeScale = 1.0; // 1.0 => use params.sizePx
-  double _runtimeFlowScale = 1.0; // 1.0 => use computed flow as-is
+  double _runtimeSizeScale = 0.1; // 1.0 => use params.sizePx
+  double _runtimeFlowScale = 0.08; // 1.0 => use computed flow as-is
 
   void setSizeScale(double v) {
     _runtimeSizeScale = v.clamp(0.01, 1.0);
@@ -505,10 +506,8 @@ class BrushEngine extends ChangeNotifier {
       final flowNorm = (sp / params.maxFlowPressure).clamp(0.0, 1.0);
       final flowCurve = math.pow(flowNorm, params.flowGamma).toDouble();
       final baseFlow =
-          (params.minFlow + (params.flow - params.minFlow) * flowCurve).clamp(
-            0.0,
-            1.0,
-          );
+          (params.minFlow + (params.maxFlow - params.minFlow) * flowCurve)
+              .clamp(0.0, 1.0);
       final flow =
           (params.minFlow + (baseFlow - params.minFlow) * _runtimeFlowScale)
               .clamp(0.0, 1.0);

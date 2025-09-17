@@ -458,8 +458,8 @@ class _BrushSliders extends StatefulWidget {
 }
 
 class _BrushSlidersState extends State<_BrushSliders> {
-  double _size = 1.0; // runtime size multiplier
-  double _flow = 1.0; // runtime flow multiplier
+  double _size = 0.1; // runtime size multiplier
+  double _flow = 0.08; // runtime flow multiplier
   double _hardness = 1.0; // initial matches params.hardness
   @override
   Widget build(BuildContext context) {
