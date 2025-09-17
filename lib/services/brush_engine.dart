@@ -26,7 +26,7 @@ class BrushParams {
   // - minFlow small but non-zero to avoid completely invisible feathering.
   // - Low hardness => slight halo softening; will tighten for lineart brush.
   // Core size / spacing
-  final double sizePx; // Base brush diameter at high pressure
+  final double maxSizePx; // Base brush diameter at high pressure
   final double spacing; // Dab spacing as fraction of diameter
 
   // Opacity (flow) modeling
@@ -36,7 +36,7 @@ class BrushParams {
   maxFlowPressure; // Pressure level where "flow" reaches target ( <1 => earlier saturation )
 
   // Size taper modeling
-  final double minSizePct; // Diameter fraction at zero pressure (0.05 => 5%)
+  final double minScale; // Diameter fraction at zero pressure (0.05 => 5%)
   final double sizeGamma; // <1 => faster early growth (SAI-like)
   final double flowGamma; // Flow response curve shaping
 
@@ -50,15 +50,15 @@ class BrushParams {
 
   const BrushParams({
     // Loose construction sketch defaults (SAI-like)
-    this.sizePx = 10,
-    this.spacing = 0.18,
-    this.flow = 0.65,
-    this.minFlow = 0.05,
-    this.maxFlowPressure = 0.85,
-    this.minSizePct = 0.05,
-    this.sizeGamma = 0.6,
+    this.maxSizePx = 100,
+    this.spacing = 0.01,
+    this.flow = 1.0,
+    this.minFlow = 0.0,
+    this.maxFlowPressure = 1.0,
+    this.minScale = 1.0,
+    this.sizeGamma = 1.0,
     this.flowGamma = 1.0,
-    this.hardness = 0.2,
+    this.hardness = 1.0,
     this.opacity = 1.0,
     this.color = const ui.Color(0xFF111115),
   });
@@ -77,12 +77,12 @@ class BrushParams {
     ui.Color? color,
   }) {
     return BrushParams(
-      sizePx: sizePx ?? this.sizePx,
+      maxSizePx: sizePx ?? this.maxSizePx,
       spacing: spacing ?? this.spacing,
       flow: flow ?? this.flow,
       minFlow: minFlow ?? this.minFlow,
       maxFlowPressure: maxFlowPressure ?? this.maxFlowPressure,
-      minSizePct: minSizePct ?? this.minSizePct,
+      minScale: minSizePct ?? this.minScale,
       sizeGamma: sizeGamma ?? this.sizeGamma,
       flowGamma: flowGamma ?? this.flowGamma,
       hardness: hardness ?? this.hardness,
@@ -423,12 +423,12 @@ class BrushEngine extends ChangeNotifier {
   double _runtimeFlowScale = 1.0; // 1.0 => use computed flow as-is
 
   void setSizeScale(double v) {
-    _runtimeSizeScale = v.clamp(0.1, 5.0);
+    _runtimeSizeScale = v.clamp(0.01, 1.0);
     notifyListeners();
   }
 
   void setFlowScale(double v) {
-    _runtimeFlowScale = v.clamp(0.1, 3.0);
+    _runtimeFlowScale = v.clamp(0.01, 1.0);
     notifyListeners();
   }
 
@@ -498,8 +498,8 @@ class BrushEngine extends ChangeNotifier {
       // Size pressure curve (gamma <1 => aggressive early growth)
       final sizeCurve = math.pow(sp, params.sizeGamma).toDouble();
       final diameter =
-          (params.sizePx * _runtimeSizeScale) *
-          (params.minSizePct + (1 - params.minSizePct) * sizeCurve);
+          (params.maxSizePx * _runtimeSizeScale) *
+          (params.minScale + (1 - params.minScale) * sizeCurve);
       final spacingPx = (params.spacing.clamp(0.05, 1.0)) * diameter;
       // Flow (density) curve: normalize pressure by maxFlowPressure then apply gamma
       final flowNorm = (sp / params.maxFlowPressure).clamp(0.0, 1.0);
