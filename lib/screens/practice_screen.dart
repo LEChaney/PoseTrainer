@@ -626,27 +626,12 @@ class _PracticePainter extends CustomPainter {
     canvas.translate(-viewportOriginPx.dx, -viewportOriginPx.dy);
     // Draw base full-res (no filter scaling happening)
     if (baseImage != null) {
-      // Final composite already tinted in renderFull
       canvas.drawImage(baseImage, ui.Offset.zero, ui.Paint());
     } else {
-      // Build mask layer (tiles + live), then tint with stroke color
-      final bounds = ui.Rect.fromLTWH(
-        0,
-        0,
-        viewWidthPx.toDouble(),
-        viewHeightPx.toDouble(),
-      );
-      canvas.saveLayer(bounds, ui.Paint());
-      // Draw white-alpha tiles and live dabs
       engine.tiles.draw(canvas);
-      live.draw(canvas);
-      // Apply tint via srcIn
-      final tintPaint = ui.Paint()
-        ..blendMode = ui.BlendMode.srcIn
-        ..color = BrushEngine.currentColor.withAlpha(255);
-      canvas.drawRect(bounds, tintPaint);
-      canvas.restore();
     }
+    // Draw live dabs in image pixel space
+    live.draw(canvas);
     canvas.restore();
   }
 
