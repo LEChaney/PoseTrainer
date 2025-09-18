@@ -421,7 +421,7 @@ class BrushEngine extends ChangeNotifier {
   // Runtime multipliers (temporary before full preset UI). These *only*
   // scale size and flow curves; base param object stays immutable.
   double _runtimeSizeScale = 0.1; // 1.0 => use params.sizePx
-  double _runtimeFlowScale = 1.0; // 1.0 => use computed flow as-is
+  double _runtimeFlowScale = 0.08; // 1.0 => use computed flow as-is
 
   void setSizeScale(double v) {
     _runtimeSizeScale = v.clamp(0.01, 1.0);
@@ -511,10 +511,6 @@ class BrushEngine extends ChangeNotifier {
       final flow =
           (params.minFlow + (baseFlow - params.minFlow) * _runtimeFlowScale)
               .clamp(0.0, 1.0);
-
-      final perDabAlpha = flow * params.opacity;
-      print("flow: $flow");
-      print("perDabAlpha: $perDabAlpha");
 
       // --- Emit first dab immediately ---------------------------------------
       if (_lastDabPos == null) {

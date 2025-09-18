@@ -78,14 +78,14 @@ class _PracticeScreenState extends State<PracticeScreen>
   int _nowMs() => DateTime.now().millisecondsSinceEpoch;
 
   double _pressure(dynamic e) {
-    // Normalize hardware pressure range to 0..1 (fallback 1.0 when unknown).
+    // Normalize hardware pressure range to 0..1 (fallback 0.5 when unknown).
     if (e is PointerEvent) {
       final denom = (e.pressureMax - e.pressureMin);
-      if (denom == 0) return 1.0;
+      if (denom == 0) return 0.5;
       final v = ((e.pressure - e.pressureMin) / denom).clamp(0.0, 1.0);
-      return v.isFinite ? v : 1.0;
+      return v.isFinite ? v : 0.5;
     }
-    return 1.0;
+    return 0.5;
   }
 
   void _onFrame(Duration _) {
@@ -507,7 +507,7 @@ class _BrushSliders extends StatefulWidget {
 
 class _BrushSlidersState extends State<_BrushSliders> {
   double _size = 0.1; // runtime size multiplier
-  double _flow = 1.0; // runtime flow multiplier
+  double _flow = 0.08; // runtime flow multiplier
   double _hardness = 1.0; // initial matches params.hardness
   @override
   Widget build(BuildContext context) {
