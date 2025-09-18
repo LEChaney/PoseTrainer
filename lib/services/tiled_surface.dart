@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'debug_profiler.dart';
 
 /// Sparse tiled surface storing composited ink.
 /// Only tiles touched by brush dabs are rasterized; others stay absent.
@@ -7,8 +8,9 @@ class TiledSurface {
   final int tileSize; // Edge length in pixels (power of two preferred)
   final Map<_TileKey, ui.Image> _tiles = {};
   final Map<_TileKey, List<_PendingDab>> _pending = {};
+  final DebugProfiler? profiler;
 
-  TiledSurface({this.tileSize = 256});
+  TiledSurface({this.tileSize = 256, this.profiler});
 
   void dispose() {
     for (final img in _tiles.values) {
@@ -59,15 +61,18 @@ class TiledSurface {
   /// Flush all queued dabs into their tiles. Small tiles keep work distribution smooth.
   Future<void> flush() async {
     if (_pending.isEmpty) return;
+    profiler?.noteTileFlushStart();
     final futures = <Future<void>>[];
     _pending.forEach((key, list) {
       futures.add(_rasterizeTile(key, list));
     });
     _pending.clear();
     await Future.wait(futures);
+    profiler?.noteTileFlushEnd();
   }
 
   Future<void> _rasterizeTile(_TileKey key, List<_PendingDab> dabs) async {
+    final start = DateTime.now().microsecondsSinceEpoch;
     final ts = tileSize.toDouble();
     final recorder = ui.PictureRecorder();
     final rect = ui.Rect.fromLTWH(0, 0, ts, ts);
@@ -88,6 +93,8 @@ class TiledSurface {
     final img = await pic.toImage(tileSize, tileSize);
     existing?.dispose();
     _tiles[key] = img;
+    final end = DateTime.now().microsecondsSinceEpoch;
+    profiler?.noteTileRasterized((end - start) / 1000.0);
   }
 
   /// Draw all tiles by simple blit. Assumes caller sets up transform for viewport.

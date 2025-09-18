@@ -5,6 +5,7 @@ import 'package:vector_math/vector_math_64.dart'
     show Vector2; // Unified 2D math
 import 'tiled_surface.dart';
 import '../theme/colors.dart';
+import 'debug_profiler.dart';
 
 // ---------------------------------------------------------------------------
 // Brush Engine (single soft round brush)
@@ -386,7 +387,7 @@ class BrushEngine extends ChangeNotifier {
   final BrushParams params;
   final StrokeLayer live =
       StrokeLayer(); // Holds dabs for active stroke (tail only once tiled baking active)
-  final TiledSurface tiles = TiledSurface(tileSize: 256);
+  late final TiledSurface tiles;
   final OneEuro _fp = OneEuro()
     ..beta = 0.02; // Pressure smoothing (slightly faster)
   SmoothingMode positionMode = SmoothingMode.predictive;
@@ -407,7 +408,10 @@ class BrushEngine extends ChangeNotifier {
   // Track current hardness like other runtime controls for consistent access.
   double _hardness;
 
-  BrushEngine(this.params) : _hardness = params.hardness {
+  final DebugProfiler? profiler;
+
+  BrushEngine(this.params, {this.profiler}) : _hardness = params.hardness {
+    tiles = TiledSurface(tileSize: 256, profiler: profiler);
     _strokeColorFallback = params.color;
     // Initialize runtime scales from params so UI can change defaults centrally.
     _runtimeSizeScale = params.runtimeSizeScale;

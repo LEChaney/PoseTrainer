@@ -11,6 +11,7 @@ import 'review_screen.dart';
 import '../theme/colors.dart';
 // Layout constants consumed indirectly by ReferenceDrawSplit.
 import '../widgets/reference_draw_split.dart';
+import '../services/debug_profiler.dart';
 
 // practice_screen.dart
 // --------------------
@@ -49,6 +50,8 @@ class _PracticeScreenState extends State<PracticeScreen>
   late final Ticker _ticker;
   bool _handedOff = false; // Becomes true once we pass _base to ReviewScreen.
   bool _ctrlDown = false; // track Control key for panning mode
+  final DebugProfiler _profiler = DebugProfiler();
+  bool _showProfilerHud = true; // toggle for on-screen profiler
 
   // Pixel density / base sizing
   int _baseWidthPx = 0; // canvas extent tracked for export sizing
@@ -63,7 +66,7 @@ class _PracticeScreenState extends State<PracticeScreen>
   @override
   void initState() {
     super.initState();
-    engine = BrushEngine(const BrushParams())..prepare();
+    engine = BrushEngine(const BrushParams(), profiler: _profiler)..prepare();
     // Pick canvas size: use reference image dimensions if available; otherwise a square fallback.
     final w = widget.reference?.width ?? 1200;
     final h = widget.reference?.height ?? 1200;
@@ -96,6 +99,7 @@ class _PracticeScreenState extends State<PracticeScreen>
     // After adding new points, bake existing live dabs for constant cost.
     // Await to keep ordering predictable; work is per-dab small.
     engine.bakeLiveToTiles();
+    _profiler.noteFrameFlush();
   }
 
   void _flushPending() {
@@ -103,6 +107,7 @@ class _PracticeScreenState extends State<PracticeScreen>
     engine.addPoints(List.of(_pending));
     _pending.clear();
     engine.bakeLiveToTiles();
+    _profiler.noteFrameFlush();
   }
 
   Future<void> _commitStroke() async {
@@ -163,6 +168,11 @@ class _PracticeScreenState extends State<PracticeScreen>
         if (isCtrl != _ctrlDown) {
           setState(() => _ctrlDown = isCtrl);
         }
+        // Simple keyboard toggle for profiler HUD
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.f8) {
+          setState(() => _showProfilerHud = !_showProfilerHud);
+        }
       },
       child: Scaffold(
         appBar: _buildAppBar(),
@@ -175,6 +185,11 @@ class _PracticeScreenState extends State<PracticeScreen>
   AppBar _buildAppBar() => AppBar(
     title: const Text('Practice'),
     actions: [
+      IconButton(
+        icon: Icon(_showProfilerHud ? Icons.speed : Icons.speed_outlined),
+        onPressed: () => setState(() => _showProfilerHud = !_showProfilerHud),
+        tooltip: _showProfilerHud ? 'Hide Profiler (F8)' : 'Show Profiler (F8)',
+      ),
       IconButton(
         icon: const Icon(Icons.check),
         onPressed: _finish,
@@ -194,7 +209,17 @@ class _PracticeScreenState extends State<PracticeScreen>
         final dpr = MediaQuery.of(context).devicePixelRatio;
         final canvasLogical = Size(constraints.maxWidth, constraints.maxHeight);
         _scheduleGrowthIfNeeded(canvasLogical, dpr);
-        return _buildCanvasArea(dpr, canvasLogical);
+        return Stack(
+          children: [
+            _buildCanvasArea(dpr, canvasLogical),
+            if (_showProfilerHud)
+              Positioned(
+                left: 8,
+                bottom: 8,
+                child: _ProfilerHud(profiler: _profiler),
+              ),
+          ],
+        );
       },
     ),
   );
@@ -216,6 +241,7 @@ class _PracticeScreenState extends State<PracticeScreen>
       devicePixelRatio: dpr,
       applyPendingGrowth: _applyPendingGrowthIfAny,
       onViewportChange: (o) => setState(() => _viewportOriginPx = o),
+      profiler: _profiler,
     );
   }
 
@@ -302,6 +328,7 @@ class _CanvasArea extends StatefulWidget {
   final double devicePixelRatio;
   final Future<void> Function() applyPendingGrowth;
   final ValueChanged<Offset> onViewportChange;
+  final DebugProfiler profiler;
   const _CanvasArea({
     required this.engine,
     required this.pending,
@@ -317,6 +344,7 @@ class _CanvasArea extends StatefulWidget {
     required this.devicePixelRatio,
     required this.applyPendingGrowth,
     required this.onViewportChange,
+    required this.profiler,
   });
   @override
   State<_CanvasArea> createState() => _CanvasAreaState();
@@ -340,6 +368,7 @@ class _CanvasAreaState extends State<_CanvasArea> {
         return Listener(
           behavior: HitTestBehavior.opaque,
           onPointerDown: (e) async {
+            widget.profiler.notePointerSample();
             if (e.kind == PointerDeviceKind.touch) {
               _touchPoints[e.pointer] = e.localPosition;
               if (_touchPoints.length == 2) {
@@ -363,6 +392,7 @@ class _CanvasAreaState extends State<_CanvasArea> {
             }
           },
           onPointerMove: (e) {
+            widget.profiler.notePointerSample();
             if (e.kind == PointerDeviceKind.touch &&
                 _touchPoints.containsKey(e.pointer)) {
               _touchPoints[e.pointer] = e.localPosition;
@@ -376,6 +406,9 @@ class _CanvasAreaState extends State<_CanvasArea> {
             } else {
               _addPoint(e, logicalSize);
             }
+          },
+          onPointerHover: (e) {
+            widget.profiler.notePointerSample();
           },
           onPointerUp: (e) async {
             if (e.kind == PointerDeviceKind.touch) {
@@ -400,17 +433,20 @@ class _CanvasAreaState extends State<_CanvasArea> {
           },
           child: AnimatedBuilder(
             animation: widget.engine,
-            builder: (context, child) => CustomPaint(
-              painter: _PracticePainter(
-                base: widget.base,
-                live: widget.engine.live,
-                engine: widget.engine,
-                devicePixelRatio: dpr,
-                viewportOriginPx: widget.viewportOriginPx,
-                viewWidthPx: viewWidthPx,
-                viewHeightPx: viewHeightPx,
+            builder: (context, child) => RepaintBoundary(
+              child: CustomPaint(
+                painter: _PracticePainter(
+                  base: widget.base,
+                  live: widget.engine.live,
+                  engine: widget.engine,
+                  devicePixelRatio: dpr,
+                  viewportOriginPx: widget.viewportOriginPx,
+                  viewWidthPx: viewWidthPx,
+                  viewHeightPx: viewHeightPx,
+                  profiler: widget.profiler,
+                ),
+                size: logicalSize,
               ),
-              size: logicalSize,
             ),
           ),
         );
@@ -615,6 +651,7 @@ class _PracticePainter extends CustomPainter {
   final Offset viewportOriginPx;
   final int viewWidthPx;
   final int viewHeightPx;
+  final DebugProfiler profiler;
   _PracticePainter({
     required this.base,
     required this.live,
@@ -623,9 +660,11 @@ class _PracticePainter extends CustomPainter {
     required this.viewportOriginPx,
     required this.viewWidthPx,
     required this.viewHeightPx,
+    required this.profiler,
   });
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
+    final startMs = DateTime.now().millisecondsSinceEpoch;
     // Fill visible region with paper color in case base is smaller / panned.
     canvas.drawRect(Offset.zero & size, ui.Paint()..color = kPaperColor);
     final baseImage = base; // null while drawing
@@ -659,10 +698,79 @@ class _PracticePainter extends CustomPainter {
       canvas.restore();
     }
     canvas.restore();
+    profiler.notePaintEnd(startMs);
   }
 
   @override
   bool shouldRepaint(covariant _PracticePainter old) => true;
+}
+
+class _ProfilerHud extends StatelessWidget {
+  final DebugProfiler profiler;
+  const _ProfilerHud({required this.profiler});
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: IgnorePointer(
+        ignoring: true,
+        child: StreamBuilder<int>(
+          stream: Stream<int>.periodic(
+            const Duration(milliseconds: 250),
+            (_) => 0,
+          ),
+          builder: (context, _) {
+            final textStyle = Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: Colors.white);
+            final bg = Colors.black.withValues(alpha: 0.55);
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: DefaultTextStyle(
+                style:
+                    textStyle ??
+                    const TextStyle(fontSize: 11, color: Colors.white),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Paint: ${profiler.paintsPerSec.toStringAsFixed(0)} fps  (${profiler.avgPaintIntervalMs.toStringAsFixed(1)} ms)',
+                    ),
+                    Text(
+                      'Frame: ${profiler.framesPerSec.toStringAsFixed(0)} hz  (${profiler.avgFrameIntervalMs.toStringAsFixed(1)} ms)',
+                    ),
+                    Text(
+                      'Input: ${profiler.inputsPerSec.toStringAsFixed(0)} hz  (${profiler.avgInputIntervalMs.toStringAsFixed(1)} ms)',
+                    ),
+                    Text(
+                      'Latency: input→paint ${profiler.lastInputToPaintMs.toStringAsFixed(1)} ms  frame→paint ${profiler.lastFrameToPaintMs.toStringAsFixed(1)} ms',
+                    ),
+                    Text(
+                      'Paint time: ${profiler.lastPaintDurationMs.toStringAsFixed(2)} ms',
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Tiles: ${profiler.lastTileFlushCount} in ${profiler.lastTileFlushDurationMs.toStringAsFixed(2)} ms'
+                      '  (${profiler.lastTileAvgMs.toStringAsFixed(2)} avg |'
+                      ' ${profiler.lastTileMinMs.toStringAsFixed(2)}–${profiler.lastTileMaxMs.toStringAsFixed(2)} ms)',
+                    ),
+                    Text(
+                      'Tile flush rate: ${profiler.tileFlushesPerSec.toStringAsFixed(0)} hz  (${profiler.avgTileFlushIntervalMs.toStringAsFixed(1)} ms)',
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 
 // _snapLogical removed; snapping handled in shared split widget.
