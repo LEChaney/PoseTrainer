@@ -7,11 +7,11 @@
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:posecoach/main.dart';
+import 'package:posetrainer/main.dart';
 
 void main() {
   testWidgets('App builds home screen', (WidgetTester tester) async {
-    await tester.pumpWidget(const PoseCoachApp());
+    await tester.pumpWidget(const PoseTrainerApp());
     expect(find.text('Timed Figure Drawing'), findsOneWidget);
   });
 }

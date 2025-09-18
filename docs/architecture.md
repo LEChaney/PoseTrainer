@@ -1,9 +1,9 @@
-# PoseCoach Architecture
+# PoseTrainer Architecture
 
 _Last updated: 2025-09-14 (reflects removal of legacy timed pose sequence)_
 
 ## Overview
-PoseCoach provides a tight loop for gesture / figure drawing practice:
+PoseTrainer provides a tight loop for gesture / figure drawing practice:
 Search reference → Practice (draw) → Review (overlay / side‑by‑side) → (optional) Revisit via History.
 The codebase favors clarity over abstraction: thin UI widgets, plain services (Provider + ChangeNotifier), immutable session records, and a simple brush pipeline using `drawAtlas`.
 

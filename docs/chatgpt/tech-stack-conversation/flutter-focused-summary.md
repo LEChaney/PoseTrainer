@@ -1,4 +1,4 @@
-# PoseCoach – Flutter-Focused Conversation Summary
+# PoseTrainer – Flutter-Focused Conversation Summary
 
 This file condenses the original long ChatGPT tech stack discussion to ONLY the parts that matter for the **current Flutter-first implementation path**. All deep Rust / wgpu / custom GPU pipeline planning has been intentionally omitted (deferred for a later phase). Keep this as a quick strategic + tactical reference while building the MVP.
 

@@ -1,11 +1,11 @@
-PoseCoach
+PoseTrainer
 =========
 
 Figure drawing practice app focused on: low-latency pencil‑like brushing, tag‑driven reference selection, and clear post‑session review (side‑by‑side + overlay). Built Flutter‑first for iOS, Android, desktop, and web using Impeller.
 
 Why It Exists
 -------------
-Practice apps often lack: (a) a pleasant, responsive brush feel, (b) rich tag filtering on large public image sets, and (c) an immediate overlay comparison workflow. PoseCoach aims to keep the core loop fast: search → draw → review → iterate.
+Practice apps often lack: (a) a pleasant, responsive brush feel, (b) rich tag filtering on large public image sets, and (c) an immediate overlay comparison workflow. PoseTrainer aims to keep the core loop fast: search → draw → review → iterate.
 
 Core (Stable) Goals
 -------------------
@@ -22,7 +22,7 @@ Advanced multibrush engines, AI coaching, cloud sync, multi‑layer compositing,
 
 Tech Overview
 -------------
-- Framework: Flutter 3.x (Impeller renderer)
+- Framework: Flutter 3.x
 - State: Provider + ChangeNotifier (no Bloc/Riverpod unless justified)
 - Networking: http (descriptive User‑Agent for e621)
 - Rendering: Canvas + drawAtlas soft disc sprite
@@ -52,18 +52,17 @@ Running the App
 Windows / Android:
 ```powershell
 flutter pub get
-flutter run --enable-impeller
+flutter run
 ```
 iOS (from macOS host):
 ```bash
 flutter pub get
-flutter run --device-timeout 120 --enable-impeller -d <device_id>
+flutter run --device-timeout 120 -d <device_id>
 ```
 Web (development only):
 ```bash
 flutter run -d chrome
 ```
-Optional (compare without Impeller renderer): `flutter run --no-enable-impeller`
 
 Publishing for iOS from Windows
 -------------------------------

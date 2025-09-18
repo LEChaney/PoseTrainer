@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "posecoach" "\0"
+            VALUE "FileDescription", "posetrainer" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "posecoach" "\0"
+            VALUE "InternalName", "posetrainer" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "posecoach.exe" "\0"
-            VALUE "ProductName", "posecoach" "\0"
+            VALUE "OriginalFilename", "posetrainer.exe" "\0"
+            VALUE "ProductName", "posetrainer" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

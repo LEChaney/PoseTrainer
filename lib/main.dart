@@ -21,7 +21,7 @@ import 'screens/search_screen.dart';
 /// `runApp` attaches the widget tree to the screen and starts the rendering
 /// + event (gesture) loop.
 void main() {
-  runApp(const PoseCoachApp());
+  runApp(const PoseTrainerApp());
 }
 
 /// Root widget of the app.
@@ -30,8 +30,8 @@ void main() {
 /// services we register below. Those services are injected using
 /// `MultiProvider`, which is just a convenience wrapper around several
 /// individual `ChangeNotifierProvider` widgets.
-class PoseCoachApp extends StatelessWidget {
-  const PoseCoachApp({super.key});
+class PoseTrainerApp extends StatelessWidget {
+  const PoseTrainerApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +42,7 @@ class PoseCoachApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => SessionService()),
       ],
       child: MaterialApp(
-        title: 'PoseCoach',
+        title: 'PoseTrainer',
         theme: ThemeData(
           // Material 3 theming; a seeded color scheme generates harmonious colors.
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),

@@ -321,7 +321,7 @@ class _SearchScreenState extends State<SearchScreen> {
       final resp = await http.get(
         uri,
         headers: {
-          'User-Agent': 'PoseCoachPrototype/0.1 (contact: you@example.com)',
+          'User-Agent': 'PoseTrainerPrototype/0.1 (contact: you@example.com)',
         },
       );
       if (resp.statusCode != 200) {
@@ -503,7 +503,7 @@ Future<ui.Image> _fetchUiImage(String url) async {
   final resp = await http.get(
     Uri.parse(url),
     headers: {
-      'User-Agent': 'PoseCoachPrototype/0.1 (contact: you@example.com)',
+      'User-Agent': 'PoseTrainerPrototype/0.1 (contact: you@example.com)',
     },
   );
   if (resp.statusCode != 200) {

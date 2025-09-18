@@ -61,7 +61,7 @@ class ReferenceSearchService extends ChangeNotifier {
         uri,
         headers: const {
           // Including a descriptive User-Agent is required by e621's API policy.
-          'User-Agent': 'PoseCoach/0.1 (contact: example@example.com)',
+          'User-Agent': 'PoseTrainer/0.1 (contact: example@example.com)',
         },
       );
       if (resp.statusCode != 200) {
@@ -102,7 +102,7 @@ class ReferenceSearchService extends ChangeNotifier {
     final resp = await http.get(
       Uri.parse(url),
       headers: const {
-        'User-Agent': 'PoseCoach/0.1 (contact: example@example.com)',
+        'User-Agent': 'PoseTrainer/0.1 (contact: example@example.com)',
       },
     );
     if (resp.statusCode != 200) {

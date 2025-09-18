@@ -1,4 +1,4 @@
-PoseCoach – Copilot Instructions (stable core)
+PoseTrainer – Copilot Instructions (stable core)
 
 Purpose: Timed pose / figure drawing app with low‑latency brush, tag search, and overlay review. Code must stay clear and human‑readable.
 
@@ -12,7 +12,7 @@ Architecture:
 - State: Provider + ChangeNotifier only (no Bloc/Riverpod unless explicitly requested).
 - Services live in lib/services; plain classes, no global singletons.
 - Keep UI widgets thin; move logic to services/models.
-- Relative imports (package:posecoach/... only for public shared paths).
+- Relative imports (package:posetrainer/... only for public shared paths).
 
 Brush Pipeline (current scope): soft disc sprite, batched dabs (drawAtlas), commit stroke on pointer up, One‑Euro for x/y/pressure.
 

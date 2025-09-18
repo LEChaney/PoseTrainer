@@ -1,4 +1,4 @@
-package com.example.posecoach
+package com.example.posetrainer
 
 import io.flutter.embedding.android.FlutterActivity
 
