@@ -67,8 +67,8 @@ class BrushParams {
     this.hardness = 1.0,
     this.opacity = 1.0,
     this.color = kBrushDarkDefault,
-    this.runtimeSizeScale = 0.1,
-    this.runtimeFlowScale = 0.08,
+    this.runtimeSizeScale = 0.07,
+    this.runtimeFlowScale = 0.06,
   });
 
   BrushParams copyWith({
