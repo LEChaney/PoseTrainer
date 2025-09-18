@@ -31,11 +31,10 @@ Sessions & Review:
 - Store reference + drawing together with minimal metadata (source URL, timestamp).
 - Keep data small and explicit; add fields only when needed.
 
-Out of Scope (defer): advanced brushes, multi-layer compositing, AI, cloud sync.
-
 Quality:
 - Prefer readability > cleverness; remove dead prototype code when migrated.
 - Add focused tests for spacing, smoothing, session save/review when stabilizing.
+- Dart's ui.Color class is now floating point by default and several functions / accessors have been deprecated. Use r/g/b/a properties and constructors with 0..1 floats. All withXxx() methods are deprecated and replaced a single withValues() method that takes named arguments.
 
 Readability Addendum (beginner phase):
 - Minimize nesting: prefer early returns, extract private widgets/helpers when a build method exceeds ~40 lines or has >2 nested conditionals.
