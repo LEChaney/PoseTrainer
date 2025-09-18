@@ -36,6 +36,16 @@ Quality:
 - Add focused tests for spacing, smoothing, session save/review when stabilizing.
 - Dart's ui.Color class is now floating point by default and several functions / accessors have been deprecated. Use r/g/b/a properties and constructors with 0..1 floats. All withXxx() methods are deprecated and replaced a single withValues() method that takes named arguments.
 
+Color Space & Alpha (Invariant):
+- Never composite in sRGB space — do all math in Linear.
+- Keep colors premultiplied at all times; do not unpremultiply.
+- Convert channels directly: sRGB↔Linear on premultiplied RGB; leave alpha unchanged.
+- Linear SrcOver (premultiplied):
+	- rgb_out = rgb_src + rgb_dst * (1 − a_src)
+	- a_out   = a_src  + a_dst  * (1 − a_src)
+- Assets and framebuffers are stored as sRGB after being converted from premultiplied linear.
+- This means that when they are loaded back in, and converted to linear, they will be in premultiplied linear space already.
+
 Readability Addendum (beginner phase):
 - Minimize nesting: prefer early returns, extract private widgets/helpers when a build method exceeds ~40 lines or has >2 nested conditionals.
 - Split long onTap / async handlers into named methods.
