@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 import 'debug_profiler.dart';
+import 'dab_renderer.dart';
 
 /// Sparse tiled surface storing composited ink.
 /// Only tiles touched by brush dabs are rasterized; others stay absent.
@@ -87,24 +88,11 @@ class TiledSurface {
     if (existing != null) {
       canvas.drawImage(existing, ui.Offset.zero, ui.Paint());
     }
-    final paint = ui.Paint()..isAntiAlias = true;
     for (final d in dabs) {
       // Convert to tile local coordinates
       final local = d.center - d.tileOrigin;
       // Render a radial alpha mask using a hard core up to coreRatio, then linear fade to edge
-      final centerColor = d.color; // white with alpha already encoded
-      final edgeColor = const ui.Color.fromARGB(0, 255, 255, 255);
-      final stops = <double>[0.0, d.coreRatio.clamp(0.0, 1.0), 1.0];
-      final colors = <ui.Color>[centerColor, centerColor, edgeColor];
-      paint.shader = ui.Gradient.radial(
-        local,
-        d.radius,
-        colors,
-        stops,
-        ui.TileMode.clamp,
-      );
-      canvas.drawCircle(local, d.radius, paint);
-      paint.shader = null;
+      drawFeatheredDab(canvas, local, d.radius, d.color, d.coreRatio);
     }
     final pic = recorder.endRecording();
     final img = await pic.toImage(tileSize, tileSize);

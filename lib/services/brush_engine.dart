@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:vector_math/vector_math_64.dart'
     show Vector2; // Unified 2D math
 import 'tiled_surface.dart';
+import 'dab_renderer.dart';
 import '../theme/colors.dart';
 import 'debug_profiler.dart';
 
@@ -343,23 +344,11 @@ class StrokeLayer {
   void draw(ui.Canvas canvas) {
     // Radial gradient dab with hardness-controlled core and feather.
     // hardness 0 => small core, long feather. hardness 1 => large core, short feather.
-    final paint = ui.Paint()..isAntiAlias = true;
+    final coreRatio = coreRatioFromHardness(_hardness);
     for (final dab in _dabs) {
       final a = (dab.alpha * 255).clamp(0, 255).round();
-      final coreRatio = ui.lerpDouble(0.35, 0.9, _hardness)!.clamp(0.0, 1.0);
       final centerColor = ui.Color.fromARGB(a, 255, 255, 255);
-      final edgeColor = const ui.Color.fromARGB(0, 255, 255, 255);
-      final stops = <double>[0.0, coreRatio, 1.0];
-      final colors = <ui.Color>[centerColor, centerColor, edgeColor];
-      paint.shader = ui.Gradient.radial(
-        dab.center,
-        dab.radius,
-        colors,
-        stops,
-        ui.TileMode.clamp,
-      );
-      canvas.drawCircle(dab.center, dab.radius, paint);
-      paint.shader = null;
+      drawFeatheredDab(canvas, dab.center, dab.radius, centerColor, coreRatio);
     }
   }
 }
@@ -573,7 +562,7 @@ class BrushEngine extends ChangeNotifier {
       final a = (d.alpha * 255).clamp(0, 255).round();
       if (a == 0) continue;
       final color = ui.Color.fromARGB(a, 255, 255, 255);
-      final coreRatio = ui.lerpDouble(0.35, 0.9, _hardness)!.clamp(0.0, 1.0);
+      final coreRatio = coreRatioFromHardness(_hardness);
       tiles.addDab(d.center, d.radius, color, coreRatio: coreRatio);
     }
     live.clear();
