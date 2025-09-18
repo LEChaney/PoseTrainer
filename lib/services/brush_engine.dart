@@ -367,9 +367,9 @@ class BrushEngine extends ChangeNotifier {
   late final TiledSurface tiles;
   final OneEuro _fp = OneEuro()
     ..beta = 0.02; // Pressure smoothing (slightly faster)
-  SmoothingMode positionMode = SmoothingMode.predictive;
+  SmoothingMode positionMode = SmoothingMode.none;
   // Unified 2D position smoother (strategy selected by mode).
-  PositionSmoother _posSmoother = PredictiveSmoother2D();
+  PositionSmoother _posSmoother = PassthroughSmoother();
   Vector2? _lastDabPos; // Last dab center to enforce spacing (null => none yet)
   // Corner detection raw history (unsmoothed)
   InputPoint? _rawPrev1; // most recent previous
