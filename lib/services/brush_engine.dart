@@ -49,6 +49,10 @@ class BrushParams {
   // Stroke color (currently single monochrome brush). Alpha is modulated per dab.
   final ui.Color color;
 
+  // UI runtime defaults (for sliders)
+  final double runtimeSizeScale; // 0.01..1.0
+  final double runtimeFlowScale; // 0.01..1.0
+
   const BrushParams({
     // Loose construction sketch defaults (SAI-like)
     this.maxSizePx = 100,
@@ -62,6 +66,8 @@ class BrushParams {
     this.hardness = 1.0,
     this.opacity = 1.0,
     this.color = kBrushDarkDefault,
+    this.runtimeSizeScale = 0.1,
+    this.runtimeFlowScale = 0.08,
   });
 
   BrushParams copyWith({
@@ -76,6 +82,8 @@ class BrushParams {
     double? hardness,
     double? opacity,
     ui.Color? color,
+    double? runtimeSizeScale,
+    double? runtimeFlowScale,
   }) {
     return BrushParams(
       maxSizePx: maxSizePx ?? this.maxSizePx,
@@ -89,6 +97,8 @@ class BrushParams {
       hardness: hardness ?? this.hardness,
       opacity: opacity ?? this.opacity,
       color: color ?? this.color,
+      runtimeSizeScale: runtimeSizeScale ?? this.runtimeSizeScale,
+      runtimeFlowScale: runtimeFlowScale ?? this.runtimeFlowScale,
     );
   }
 }
@@ -353,23 +363,13 @@ class StrokeLayer {
             0.9; // soften outer falloff
         haloPaint
           ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, sigma)
-          ..color = ui.Color.fromARGB(
-            (a * haloAlpha).round(),
-            255,
-            255,
-            255,
-          );
+          ..color = ui.Color.fromARGB((a * haloAlpha).round(), 255, 255, 255);
         canvas.drawCircle(dab.center, coreR + (haloR - coreR) * 0.5, haloPaint);
       }
       // Core: full brightness (alpha) with sharp(er) edge (AA only)
       corePaint
         ..maskFilter = null
-        ..color = ui.Color.fromARGB(
-          a,
-          255,
-          255,
-          255,
-        );
+        ..color = ui.Color.fromARGB(a, 255, 255, 255);
       canvas.drawCircle(dab.center, coreR, corePaint);
     }
   }
@@ -404,8 +404,14 @@ class BrushEngine extends ChangeNotifier {
       0.65; // above this curvature -> raw position (no smoothing)
   double curvatureBlendExp = 1.6; // shaping for blend curve
 
-  BrushEngine(this.params) {
+  // Track current hardness like other runtime controls for consistent access.
+  double _hardness;
+
+  BrushEngine(this.params) : _hardness = params.hardness {
     _strokeColorFallback = params.color;
+    // Initialize runtime scales from params so UI can change defaults centrally.
+    _runtimeSizeScale = params.runtimeSizeScale;
+    _runtimeFlowScale = params.runtimeFlowScale;
   }
 
   // Current stroke color (shared with StrokeLayer draw). For now single global.
@@ -421,6 +427,11 @@ class BrushEngine extends ChangeNotifier {
   double _runtimeSizeScale = 0.1; // 1.0 => use params.sizePx
   double _runtimeFlowScale = 0.08; // 1.0 => use computed flow as-is
 
+  // Expose current runtime controls so UI can initialize from engine state.
+  double get sizeScale => _runtimeSizeScale;
+  double get flowScale => _runtimeFlowScale;
+  double get hardness => _hardness;
+
   void setSizeScale(double v) {
     _runtimeSizeScale = v.clamp(0.01, 1.0);
     notifyListeners();
@@ -432,11 +443,12 @@ class BrushEngine extends ChangeNotifier {
   }
 
   void setHardness(double v) {
-    live.setHardness(v);
+    _hardness = v.clamp(0, 1);
+    live.setHardness(_hardness);
     notifyListeners();
   }
 
-  Future<void> prepare() => live.ensureSprite(params.hardness);
+  Future<void> prepare() => live.ensureSprite(_hardness);
 
   // Reset state at stroke start.
   void resetStroke() {
@@ -568,12 +580,7 @@ class BrushEngine extends ChangeNotifier {
     for (final d in live._dabs) {
       final a = (d.alpha * 255).clamp(0, 255).round();
       if (a == 0) continue;
-      final color = ui.Color.fromARGB(
-        a,
-        255,
-        255,
-        255,
-      );
+      final color = ui.Color.fromARGB(a, 255, 255, 255);
       tiles.addDab(d.center, d.radius, color);
     }
     live.clear();

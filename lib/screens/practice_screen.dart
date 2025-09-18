@@ -506,9 +506,20 @@ class _BrushSliders extends StatefulWidget {
 }
 
 class _BrushSlidersState extends State<_BrushSliders> {
-  double _size = 0.1; // runtime size multiplier
-  double _flow = 0.08; // runtime flow multiplier
-  double _hardness = 1.0; // initial matches params.hardness
+  double _size = 0.1; // runtime size multiplier (initialized in initState)
+  double _flow = 0.08; // runtime flow multiplier (initialized in initState)
+  double _hardness = 1.0; // initialized in initState
+
+  @override
+  void initState() {
+    super.initState();
+    // Sync initial slider positions with engine's current runtime state
+    // so defaults only need to be set in one place (BrushEngine/BrushParams).
+    _size = widget.engine.sizeScale;
+    _flow = widget.engine.flowScale;
+    _hardness = widget.engine.hardness;
+  }
+
   @override
   Widget build(BuildContext context) {
     // FLOW vs OPACITY NOTE:
