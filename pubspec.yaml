@@ -94,3 +94,8 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+  
+  shaders:
+    - shaders/linear_dab_blend.frag
+    - shaders/linear_dab_blend_uniform.frag
+    - shaders/present_tile_over_paper.frag
