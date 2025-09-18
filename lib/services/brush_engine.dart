@@ -341,37 +341,25 @@ class StrokeLayer {
   void add(Dab d) => _dabs.add(d);
 
   void draw(ui.Canvas canvas) {
-    // Two-phase analytic dab: soft halo (optional) + bright core.
-    // Goal: brighter center, harder visual edge while retaining adjustable softness.
-    // Hardness mapping: 0 -> large soft halo; 1 -> almost no halo.
-    final haloPaint = ui.Paint()..isAntiAlias = true;
-    final corePaint = ui.Paint()..isAntiAlias = true;
+    // Radial gradient dab with hardness-controlled core and feather.
+    // hardness 0 => small core, long feather. hardness 1 => large core, short feather.
+    final paint = ui.Paint()..isAntiAlias = true;
     for (final dab in _dabs) {
       final a = (dab.alpha * 255).clamp(0, 255).round();
-      final hardness = _hardness;
-      final coreRatio = ui.lerpDouble(
-        0.45,
-        0.8,
-        hardness,
-      )!; // bigger core when harder
-      final coreR = dab.radius * coreRatio;
-      final haloR = dab.radius;
-      final haloAlpha =
-          (1 - hardness) * 0.55; // fade halo as hardness increases
-      if (haloAlpha > 0.01) {
-        final sigma =
-            (haloR - coreR).clamp(0.0, dab.radius) *
-            0.9; // soften outer falloff
-        haloPaint
-          ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, sigma)
-          ..color = ui.Color.fromARGB((a * haloAlpha).round(), 255, 255, 255);
-        canvas.drawCircle(dab.center, coreR + (haloR - coreR) * 0.5, haloPaint);
-      }
-      // Core: full brightness (alpha) with sharp(er) edge (AA only)
-      corePaint
-        ..maskFilter = null
-        ..color = ui.Color.fromARGB(a, 255, 255, 255);
-      canvas.drawCircle(dab.center, coreR, corePaint);
+      final coreRatio = ui.lerpDouble(0.35, 0.9, _hardness)!.clamp(0.0, 1.0);
+      final centerColor = ui.Color.fromARGB(a, 255, 255, 255);
+      final edgeColor = const ui.Color.fromARGB(0, 255, 255, 255);
+      final stops = <double>[0.0, coreRatio, 1.0];
+      final colors = <ui.Color>[centerColor, centerColor, edgeColor];
+      paint.shader = ui.Gradient.radial(
+        dab.center,
+        dab.radius,
+        colors,
+        stops,
+        ui.TileMode.clamp,
+      );
+      canvas.drawCircle(dab.center, dab.radius, paint);
+      paint.shader = null;
     }
   }
 }
@@ -585,7 +573,8 @@ class BrushEngine extends ChangeNotifier {
       final a = (d.alpha * 255).clamp(0, 255).round();
       if (a == 0) continue;
       final color = ui.Color.fromARGB(a, 255, 255, 255);
-      tiles.addDab(d.center, d.radius, color);
+      final coreRatio = ui.lerpDouble(0.35, 0.9, _hardness)!.clamp(0.0, 1.0);
+      tiles.addDab(d.center, d.radius, color, coreRatio: coreRatio);
     }
     live.clear();
     // Flush asynchronously; caller may await if they need deterministic completion.

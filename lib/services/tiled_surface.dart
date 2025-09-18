@@ -29,7 +29,12 @@ class TiledSurface {
   }
 
   /// Queue a dab for later flush. The same dab may touch multiple tiles.
-  void addDab(ui.Offset center, double radius, ui.Color color) {
+  void addDab(
+    ui.Offset center,
+    double radius,
+    ui.Color color, {
+    required double coreRatio,
+  }) {
     final left = center.dx - radius;
     final top = center.dy - radius;
     final right = center.dx + radius;
@@ -46,6 +51,7 @@ class TiledSurface {
             center,
             radius,
             color,
+            coreRatio,
             tileOrigin: ui.Offset(
               tx * tileSize.toDouble(),
               ty * tileSize.toDouble(),
@@ -85,9 +91,20 @@ class TiledSurface {
     for (final d in dabs) {
       // Convert to tile local coordinates
       final local = d.center - d.tileOrigin;
-      paint.color = d.color;
-      // Simple analytic circle; softness currently handled by StrokeLayer before baking.
+      // Render a radial alpha mask using a hard core up to coreRatio, then linear fade to edge
+      final centerColor = d.color; // white with alpha already encoded
+      final edgeColor = const ui.Color.fromARGB(0, 255, 255, 255);
+      final stops = <double>[0.0, d.coreRatio.clamp(0.0, 1.0), 1.0];
+      final colors = <ui.Color>[centerColor, centerColor, edgeColor];
+      paint.shader = ui.Gradient.radial(
+        local,
+        d.radius,
+        colors,
+        stops,
+        ui.TileMode.clamp,
+      );
       canvas.drawCircle(local, d.radius, paint);
+      paint.shader = null;
     }
     final pic = recorder.endRecording();
     final img = await pic.toImage(tileSize, tileSize);
@@ -141,6 +158,13 @@ class _PendingDab {
   final ui.Offset center;
   final double radius;
   final ui.Color color;
+  final double coreRatio;
   final ui.Offset tileOrigin;
-  _PendingDab(this.center, this.radius, this.color, {required this.tileOrigin});
+  _PendingDab(
+    this.center,
+    this.radius,
+    this.color,
+    this.coreRatio, {
+    required this.tileOrigin,
+  });
 }
