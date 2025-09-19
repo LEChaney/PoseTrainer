@@ -5,6 +5,7 @@ import 'review_screen.dart';
 import '../models/practice_session.dart';
 import '../theme/colors.dart';
 import 'storage_diagnostics_screen.dart';
+import '../widgets/letterboxed_image.dart';
 
 // history_screen.dart
 // -------------------
@@ -127,21 +128,19 @@ class _ThumbPair extends StatelessWidget {
               child: DecoratedBox(
                 decoration: const BoxDecoration(color: kReferencePanelColor),
                 child: session.referenceUrl != null
-                    // Prefer URL if available to avoid stale in-memory refs when
-                    // multiple images were viewed in a session.
+                    // Prefer URL if available; contain to preserve aspect.
                     ? Image.network(
                         session.referenceUrl!,
                         key: ValueKey<String>(session.referenceUrl!),
-                        fit: BoxFit.cover,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.center,
                         webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
                       )
                     : (session.reference != null
-                          ? FittedBox(
-                              fit: BoxFit.cover,
-                              child: RawImage(
-                                image: session.reference,
-                                key: ValueKey<int>(session.reference.hashCode),
-                              ),
+                          ? LetterboxedImage(
+                              key: ValueKey<int>(session.reference.hashCode),
+                              image: session.reference!,
+                              background: kReferencePanelColor,
                             )
                           : const SizedBox.shrink()),
               ),
@@ -153,12 +152,10 @@ class _ThumbPair extends StatelessWidget {
               aspectRatio: 1,
               child: DecoratedBox(
                 decoration: const BoxDecoration(color: kPaperColor),
-                child: FittedBox(
-                  fit: BoxFit.cover,
-                  child: RawImage(
-                    image: session.drawing,
-                    key: ValueKey<int>(session.drawing.hashCode),
-                  ),
+                child: LetterboxedImage(
+                  key: ValueKey<int>(session.drawing.hashCode),
+                  image: session.drawing,
+                  background: kPaperColor,
                 ),
               ),
             ),
