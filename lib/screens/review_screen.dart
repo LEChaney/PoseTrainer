@@ -364,8 +364,6 @@ class _InteractiveDecodedOverlayState
 
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent) {
-      final isCtrl = HardwareKeyboard.instance.isControlPressed;
-      if (!isCtrl) return;
       final focal = event.localPosition;
       final delta = event.scrollDelta.dy;
       final factor = math.pow(1.0015, -delta);
@@ -381,9 +379,7 @@ class _InteractiveDecodedOverlayState
   }
 
   void _onPointerDown(PointerDownEvent e) {
-    final isCtrl = HardwareKeyboard.instance.isControlPressed;
-    if (isCtrl &&
-        e.kind == PointerDeviceKind.mouse &&
+    if (e.kind == PointerDeviceKind.mouse &&
         (e.buttons & kPrimaryButton) != 0) {
       _mousePanning = true;
       _lastMousePos = e.position;
@@ -413,11 +409,16 @@ class _InteractiveDecodedOverlayState
       ..scale(_scale, _scale);
     return Listener(
       onPointerSignal: _onPointerSignal,
-      onPointerDown: _onPointerDown,
+      onPointerDown: (e) {
+        // Prevent default browser behaviors by consuming events here
+        _onPointerDown(e);
+      },
       onPointerMove: _onPointerMove,
       onPointerUp: _onPointerUp,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onSecondaryTapDown: (_) {}, // consume to suppress context menu
+        onTapDown: (_) {}, // consume image clicks during panning
         onScaleStart: _onScaleStart,
         onScaleUpdate: _onScaleUpdate,
         onScaleEnd: _onScaleEnd,
@@ -515,8 +516,6 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
 
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent) {
-      final isCtrl = HardwareKeyboard.instance.isControlPressed;
-      if (!isCtrl) return;
       final focal = event.localPosition;
       final delta = event.scrollDelta.dy;
       final factor = math.pow(1.0015, -delta);
@@ -532,9 +531,7 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
   }
 
   void _onPointerDown(PointerDownEvent e) {
-    final isCtrl = HardwareKeyboard.instance.isControlPressed;
-    if (isCtrl &&
-        e.kind == PointerDeviceKind.mouse &&
+    if (e.kind == PointerDeviceKind.mouse &&
         (e.buttons & kPrimaryButton) != 0) {
       _mousePanning = true;
       _lastMousePos = e.position;
@@ -564,18 +561,29 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
       ..scale(_scale, _scale);
     return Listener(
       onPointerSignal: _onPointerSignal,
-      onPointerDown: _onPointerDown,
+      onPointerDown: (e) {
+        _onPointerDown(e);
+      },
       onPointerMove: _onPointerMove,
       onPointerUp: _onPointerUp,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onSecondaryTapDown: (_) {},
+        onTapDown: (_) {},
         onScaleStart: _onScaleStart,
         onScaleUpdate: _onScaleUpdate,
         onScaleEnd: _onScaleEnd,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Opacity(opacity: widget.refOpacity, child: widget.refChild),
+            // Prevent browser drag/drop and context interactions on the image
+            IgnorePointer(
+              ignoring: true,
+              child: Opacity(
+                opacity: widget.refOpacity,
+                child: widget.refChild,
+              ),
+            ),
             Opacity(
               opacity: widget.drawOpacity,
               child: Transform(

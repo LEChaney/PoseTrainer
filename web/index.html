@@ -31,8 +31,54 @@
 
   <title>posetrainer</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    /* Prevent native drag on images/canvas to avoid ghost-drag on Chrome */
+    img, canvas {
+      -webkit-user-drag: none; /* Safari/Chrome */
+      -webkit-user-select: none;
+      user-select: none;
+    }
+  </style>
 </head>
 <body>
+  <script>
+    // Disable native drag and context menu on IMG/CANVAS to keep gestures clean
+    (function () {
+      const markNoDrag = (el) => {
+        try { el.setAttribute('draggable', 'false'); } catch (_) {}
+      };
+      // Set on any existing elements immediately
+      document.querySelectorAll('img, canvas').forEach(markNoDrag);
+      // Observe future nodes created by Flutter
+      new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          m.addedNodes && m.addedNodes.forEach((n) => {
+            if (!(n instanceof HTMLElement)) return;
+            if (n.tagName === 'IMG' || n.tagName === 'CANVAS') markNoDrag(n);
+            n.querySelectorAll && n.querySelectorAll('img, canvas').forEach(markNoDrag);
+          });
+        }
+      }).observe(document.documentElement, { childList: true, subtree: true });
+
+      document.addEventListener('dragstart', function (e) {
+        const t = e.target;
+        if (t && (t.tagName === 'IMG' || t.tagName === 'CANVAS')) {
+          e.preventDefault();
+        }
+      }, true);
+      document.addEventListener('contextmenu', function (e) {
+        let el = e.target;
+        while (el && el !== document.body) {
+          const tag = el.tagName;
+          if (tag === 'IMG' || tag === 'CANVAS') {
+            e.preventDefault();
+            break;
+          }
+          el = el.parentElement;
+        }
+      }, true);
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
