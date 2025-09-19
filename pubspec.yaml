@@ -41,6 +41,8 @@ dependencies:
   vector_math: ^2.1.4
   # Cupertino icons
   cupertino_icons: ^1.0.8
+  # Web-only auth gating without Firebase
+  google_sign_in: ^6.2.1
 
 dev_dependencies:
   flutter_test:

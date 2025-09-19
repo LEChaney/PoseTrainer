@@ -15,7 +15,7 @@ import 'package:provider/provider.dart';
 // Local project imports (grouped logically) ---------------------------------
 import 'services/reference_search_service.dart';
 import 'services/session_service.dart';
-import 'screens/search_screen.dart';
+import 'widgets/auth_gate.dart';
 
 /// Application entry point. In Dart, execution starts with `main()`.
 /// `runApp` attaches the widget tree to the screen and starts the rendering
@@ -48,8 +48,8 @@ class PoseTrainerApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
           useMaterial3: true,
         ),
-        // First screen presented to the user: search for a reference image.
-        home: const SearchScreen(),
+        // Gate access behind Firebase Auth; allow only your accounts.
+        home: const AuthGate(allowedEmails: {'lance.e.chaney@gmail.com'}),
       ),
     );
   }
