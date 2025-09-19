@@ -6,6 +6,10 @@ import 'package:flutter/services.dart';
 import '../theme/colors.dart';
 import '../widgets/letterboxed_image.dart';
 import '../widgets/reference_draw_split.dart';
+import 'package:provider/provider.dart';
+import '../models/practice_session.dart';
+import '../models/review_result.dart';
+import '../services/session_service.dart';
 
 // review_screen.dart
 // ------------------
@@ -27,12 +31,18 @@ class ReviewScreen extends StatefulWidget {
   final String? referenceUrl; // raw network fallback (web only side-by-side)
   final ui.Image drawing;
   final String sourceUrl;
+  final OverlayTransform? initialOverlay; // persisted transform
+  final bool sessionControls; // show Next/Finish and pop result
+  final bool isLast; // label the action as Finish
   const ReviewScreen({
     super.key,
     required this.reference,
     this.referenceUrl,
     required this.drawing,
     required this.sourceUrl,
+    this.initialOverlay,
+    this.sessionControls = false,
+    this.isLast = false,
   });
   @override
   State<ReviewScreen> createState() => _ReviewScreenState();
@@ -42,11 +52,37 @@ class _ReviewScreenState extends State<ReviewScreen> {
   bool overlay = true;
   double refOpacity = 0.6;
   double drawOpacity = 1.0;
+  double _scale = 1.0;
+  Offset _offset = Offset.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialOverlay != null) {
+      _scale = widget.initialOverlay!.scale;
+      _offset = widget.initialOverlay!.offset;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Review')),
+      appBar: AppBar(
+        title: const Text('Review'),
+        actions: [
+          if (widget.sessionControls)
+            TextButton(
+              onPressed: () {
+                final res = ReviewResult(
+                  action: widget.isLast ? ReviewAction.end : ReviewAction.next,
+                  overlay: OverlayTransform(scale: _scale, offset: _offset),
+                );
+                Navigator.of(context).pop(res);
+              },
+              child: Text(widget.isLast ? 'Finish' : 'Next'),
+            ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(padding: const EdgeInsets.all(8), child: _buildControls()),
@@ -117,6 +153,16 @@ class _ReviewScreenState extends State<ReviewScreen> {
           drawImg: widget.drawing,
           refOpacity: refOpacity,
           drawOpacity: drawOpacity,
+          initial: widget.initialOverlay,
+          onTransform: (s, o) {
+            _scale = s;
+            _offset = o;
+            if (!widget.sessionControls) {
+              context.read<SessionService>().updateLastOverlay(
+                OverlayTransform(scale: s, offset: o),
+              );
+            }
+          },
         );
       }
       if (widget.reference != null) {
@@ -125,6 +171,16 @@ class _ReviewScreenState extends State<ReviewScreen> {
           drawImg: widget.drawing,
           refOpacity: refOpacity,
           drawOpacity: drawOpacity,
+          initial: widget.initialOverlay,
+          onTransform: (s, o) {
+            _scale = s;
+            _offset = o;
+            if (!widget.sessionControls) {
+              context.read<SessionService>().updateLastOverlay(
+                OverlayTransform(scale: s, offset: o),
+              );
+            }
+          },
         );
       }
     }
@@ -246,11 +302,15 @@ class _InteractiveDecodedOverlay extends StatefulWidget {
   final ui.Image refImg;
   final ui.Image drawImg;
   final double refOpacity, drawOpacity;
+  final OverlayTransform? initial;
+  final void Function(double scale, Offset offset)? onTransform;
   const _InteractiveDecodedOverlay({
     required this.refImg,
     required this.drawImg,
     required this.refOpacity,
     required this.drawOpacity,
+    this.initial,
+    this.onTransform,
   });
   @override
   State<_InteractiveDecodedOverlay> createState() =>
@@ -270,6 +330,15 @@ class _InteractiveDecodedOverlayState
   static const double _minScale = 0.2;
   static const double _maxScale = 10.0;
 
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initial != null) {
+      _scale = widget.initial!.scale;
+      _offset = widget.initial!.offset;
+    }
+  }
+
   void _onScaleStart(ScaleStartDetails details) {
     _baseScale = _scale;
     _baseOffset = _offset;
@@ -286,6 +355,7 @@ class _InteractiveDecodedOverlayState
       _scale = newScale;
       _offset = newOffset;
     });
+    widget.onTransform?.call(_scale, _offset);
   }
 
   void _onScaleEnd(ScaleEndDetails _) {
@@ -306,6 +376,7 @@ class _InteractiveDecodedOverlayState
         _scale = newScale;
         _offset = newOffset;
       });
+      widget.onTransform?.call(_scale, _offset);
     }
   }
 
@@ -326,6 +397,7 @@ class _InteractiveDecodedOverlayState
         _offset += delta;
         _lastMousePos = e.position;
       });
+      widget.onTransform?.call(_scale, _offset);
     }
   }
 
@@ -383,11 +455,15 @@ class _InteractiveUrlOverlay extends StatefulWidget {
   final Widget refChild; // already built Image widget for network ref
   final ui.Image drawImg;
   final double refOpacity, drawOpacity;
+  final OverlayTransform? initial;
+  final void Function(double scale, Offset offset)? onTransform;
   const _InteractiveUrlOverlay({
     required this.refChild,
     required this.drawImg,
     required this.refOpacity,
     required this.drawOpacity,
+    this.initial,
+    this.onTransform,
   });
   @override
   State<_InteractiveUrlOverlay> createState() => _InteractiveUrlOverlayState();
@@ -405,6 +481,15 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
   static const double _minScale = 0.2;
   static const double _maxScale = 10.0;
 
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initial != null) {
+      _scale = widget.initial!.scale;
+      _offset = widget.initial!.offset;
+    }
+  }
+
   void _onScaleStart(ScaleStartDetails details) {
     _baseScale = _scale;
     _baseOffset = _offset;
@@ -421,6 +506,7 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
       _scale = newScale;
       _offset = newOffset;
     });
+    widget.onTransform?.call(_scale, _offset);
   }
 
   void _onScaleEnd(ScaleEndDetails _) {
@@ -441,6 +527,7 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
         _scale = newScale;
         _offset = newOffset;
       });
+      widget.onTransform?.call(_scale, _offset);
     }
   }
 
@@ -461,6 +548,7 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
         _offset += delta;
         _lastMousePos = e.position;
       });
+      widget.onTransform?.call(_scale, _offset);
     }
   }
 

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import '../services/reference_search_service.dart';
 import 'practice_screen.dart';
+import 'session_runner_screen.dart';
 
 // ---------------------------------------------------------------------------
 // SearchScreen
@@ -27,6 +28,8 @@ class _SearchScreenState extends State<SearchScreen> {
   final _controller = TextEditingController(
     text: 'standing canine favcount:>100',
   );
+  int _count = 5;
+  int _seconds = 60;
 
   // --- Lifecycle -----------------------------------------------------------
 
@@ -51,6 +54,58 @@ class _SearchScreenState extends State<SearchScreen> {
             controller: _controller,
             loading: search.isLoading,
             onSubmit: () => search.search(_controller.text),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: Row(
+              children: [
+                const Text('Count'),
+                IconButton(
+                  onPressed: () =>
+                      setState(() => _count = (_count - 1).clamp(1, 100)),
+                  icon: const Icon(Icons.remove),
+                ),
+                Text('$_count'),
+                IconButton(
+                  onPressed: () =>
+                      setState(() => _count = (_count + 1).clamp(1, 100)),
+                  icon: const Icon(Icons.add),
+                ),
+                const SizedBox(width: 16),
+                const Text('Seconds'),
+                IconButton(
+                  onPressed: () => setState(
+                    () => _seconds = (_seconds - 10).clamp(10, 3600),
+                  ),
+                  icon: const Icon(Icons.remove),
+                ),
+                Text('$_seconds'),
+                IconButton(
+                  onPressed: () => setState(
+                    () => _seconds = (_seconds + 10).clamp(10, 3600),
+                  ),
+                  icon: const Icon(Icons.add),
+                ),
+                const Spacer(),
+                FilledButton.icon(
+                  onPressed: search.results.isEmpty
+                      ? null
+                      : () {
+                          final items = search.results.take(_count).toList();
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => SessionRunnerScreen(
+                                items: items,
+                                secondsPerImage: _seconds,
+                              ),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Start Session'),
+                ),
+              ],
+            ),
           ),
           if (search.error != null) _ErrorBanner(message: search.error!),
           // Expanded results grid.

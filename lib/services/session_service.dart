@@ -14,16 +14,34 @@ class SessionService extends ChangeNotifier {
   List<PracticeSession> get history => List.unmodifiable(_history);
 
   /// Add a finished session to the top of the history.
-  void add(String sourceUrl, ui.Image reference, ui.Image drawing) {
+  void add({
+    required String sourceUrl,
+    ui.Image? reference,
+    String? referenceUrl,
+    required ui.Image drawing,
+    OverlayTransform overlay = const OverlayTransform(
+      scale: 1.0,
+      offset: ui.Offset.zero,
+    ),
+  }) {
     _history.insert(
       0,
       PracticeSession(
         sourceUrl: sourceUrl,
         reference: reference,
+        referenceUrl: referenceUrl,
         drawing: drawing,
         endedAt: DateTime.now(),
+        overlay: overlay,
       ),
     );
+    notifyListeners();
+  }
+
+  /// Update the most recent session's saved overlay transform (after review adjustments).
+  void updateLastOverlay(OverlayTransform transform) {
+    if (_history.isEmpty) return;
+    _history[0] = _history[0].copyWith(overlay: transform);
     notifyListeners();
   }
 }

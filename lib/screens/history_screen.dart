@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/session_service.dart';
 import 'review_screen.dart';
 import '../models/practice_session.dart';
+import '../theme/colors.dart';
 
 // history_screen.dart
 // -------------------
@@ -71,6 +72,8 @@ class _HistoryTile extends StatelessWidget {
     // Single tap: push the review screen using a Material route. We deliberately
     // avoid Hero animations or extra transitions to keep iteration fast.
     return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      leading: _ThumbPair(session: session),
       title: Text(
         session.sourceUrl,
         maxLines: 1,
@@ -81,10 +84,59 @@ class _HistoryTile extends StatelessWidget {
         MaterialPageRoute(
           builder: (ctx) => ReviewScreen(
             reference: session.reference,
+            referenceUrl: session.referenceUrl,
             drawing: session.drawing,
             sourceUrl: session.sourceUrl,
+            initialOverlay: session.overlay,
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ThumbPair extends StatelessWidget {
+  final PracticeSession session;
+  const _ThumbPair({required this.session});
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 96,
+      child: Row(
+        children: [
+          Expanded(
+            child: AspectRatio(
+              aspectRatio: 1,
+              child: DecoratedBox(
+                decoration: const BoxDecoration(color: kReferencePanelColor),
+                child: session.reference != null
+                    ? FittedBox(
+                        fit: BoxFit.cover,
+                        child: RawImage(image: session.reference),
+                      )
+                    : (session.referenceUrl != null
+                          ? Image.network(
+                              session.referenceUrl!,
+                              fit: BoxFit.cover,
+                            )
+                          : const SizedBox.shrink()),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: AspectRatio(
+              aspectRatio: 1,
+              child: DecoratedBox(
+                decoration: const BoxDecoration(color: kPaperColor),
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: RawImage(image: session.drawing),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

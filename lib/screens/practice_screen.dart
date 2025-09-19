@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/gestures.dart'; // added for PointerDeviceKind
 import 'package:flutter/services.dart'; // for HardwareKeyboard / KeyEvent
 import '../services/brush_engine.dart';
 import '../services/session_service.dart';
+import '../models/practice_result.dart';
 import 'review_screen.dart';
 import '../theme/colors.dart';
 // Layout constants consumed indirectly by ReferenceDrawSplit.
@@ -32,11 +34,15 @@ class PracticeScreen extends StatefulWidget {
   final ui.Image? reference; // may be null on web if we only have URL
   final String? referenceUrl; // used on web to display via Image.network
   final String sourceUrl;
+  final int? timeLimitSeconds; // when set, shows countdown and auto-finishes
+  final bool sessionMode; // when true, pop PracticeResult instead of navigating
   const PracticeScreen({
     super.key,
     this.reference,
     this.referenceUrl,
     required this.sourceUrl,
+    this.timeLimitSeconds,
+    this.sessionMode = false,
   });
   @override
   State<PracticeScreen> createState() => _PracticeScreenState();
@@ -52,6 +58,9 @@ class _PracticeScreenState extends State<PracticeScreen>
   bool _ctrlDown = false; // track Control key for panning mode
   final DebugProfiler _profiler = DebugProfiler();
   bool _showProfilerHud = true; // toggle for on-screen profiler
+  // Countdown state (session mode)
+  Timer? _countdown;
+  int _remainingSec = 0;
 
   // Pixel density / base sizing
   int _baseWidthPx = 0; // canvas extent tracked for export sizing
@@ -74,6 +83,22 @@ class _PracticeScreenState extends State<PracticeScreen>
     _baseHeightPx = h;
     // Ticker drives per-frame flushing of buffered pointer points to the brush engine.
     _ticker = createTicker(_onFrame)..start();
+    // Start countdown if in timed session
+    final limit = widget.timeLimitSeconds;
+    if (limit != null && limit > 0) {
+      _remainingSec = limit;
+      _countdown = Timer.periodic(const Duration(seconds: 1), (t) async {
+        if (!mounted) return;
+        if (_remainingSec <= 1) {
+          t.cancel();
+          _remainingSec = 0;
+          // Time up -> finish
+          await _finish();
+          return;
+        }
+        setState(() => _remainingSec--);
+      });
+    }
   }
 
   // (Old _initBase removed – tiling approach no longer preallocates full image.)
@@ -122,33 +147,41 @@ class _PracticeScreenState extends State<PracticeScreen>
     final finalImg = await engine.renderFull(_baseWidthPx, _baseHeightPx);
     _finalComposite = finalImg;
     if (!mounted) return;
-    if (widget.reference != null) {
-      context.read<SessionService>().add(
-        widget.sourceUrl,
-        widget.reference!,
-        finalImg,
-      );
+    if (!widget.sessionMode) {
+      if (widget.reference != null || widget.referenceUrl != null) {
+        context.read<SessionService>().add(
+          sourceUrl: widget.sourceUrl,
+          reference: widget.reference,
+          referenceUrl: widget.referenceUrl,
+          drawing: finalImg,
+        );
+      }
     }
     // We are about to transfer ownership of _base to the next screen. We must
     // NOT dispose it in dispose(), otherwise the ReviewScreen's painters will
     // attempt to draw a disposed image causing the drawImage/assert failure
     // observed in overlay mode.
     _handedOff = true;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => ReviewScreen(
-          reference: widget.reference,
-          referenceUrl: widget.referenceUrl,
-          drawing: finalImg,
-          sourceUrl: widget.sourceUrl,
+    if (widget.sessionMode) {
+      Navigator.of(context).pop(PracticeResult.completed(finalImg));
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ReviewScreen(
+            reference: widget.reference,
+            referenceUrl: widget.referenceUrl,
+            drawing: finalImg,
+            sourceUrl: widget.sourceUrl,
+          ),
         ),
-      ),
-    );
+      );
+    }
   }
 
   @override
   void dispose() {
     _ticker.dispose();
+    _countdown?.cancel();
     // Dispose only if we still own the backing image. After navigation to
     // ReviewScreen the image is displayed there and must remain valid.
     if (!_handedOff) {
@@ -190,6 +223,12 @@ class _PracticeScreenState extends State<PracticeScreen>
         onPressed: () => setState(() => _showProfilerHud = !_showProfilerHud),
         tooltip: _showProfilerHud ? 'Hide Profiler (F8)' : 'Show Profiler (F8)',
       ),
+      if (widget.sessionMode)
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(const PracticeResult.skipped()),
+          child: const Text('Skip'),
+        ),
       IconButton(
         icon: const Icon(Icons.check),
         onPressed: _finish,
@@ -212,6 +251,15 @@ class _PracticeScreenState extends State<PracticeScreen>
         return Stack(
           children: [
             _buildCanvasArea(dpr, canvasLogical),
+            if (widget.timeLimitSeconds != null)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: _CountdownChip(
+                  remaining: _remainingSec,
+                  total: widget.timeLimitSeconds!,
+                ),
+              ),
             if (_showProfilerHud)
               Positioned(
                 left: 8,
@@ -767,6 +815,42 @@ class _ProfilerHud extends StatelessWidget {
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _CountdownChip extends StatelessWidget {
+  final int remaining;
+  final int total;
+  const _CountdownChip({required this.remaining, required this.total});
+  @override
+  Widget build(BuildContext context) {
+    final r = remaining.clamp(0, total);
+    final pct = total > 0 ? r / total : 0.0;
+    final mm = (r ~/ 60).toString().padLeft(2, '0');
+    final ss = (r % 60).toString().padLeft(2, '0');
+    return Material(
+      elevation: 2,
+      borderRadius: BorderRadius.circular(16),
+      color: Colors.black54,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 60,
+              child: LinearProgressIndicator(
+                value: pct,
+                minHeight: 6,
+                backgroundColor: Colors.white24,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text('$mm:$ss', style: const TextStyle(color: Colors.white)),
+          ],
         ),
       ),
     );
