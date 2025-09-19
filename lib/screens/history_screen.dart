@@ -86,6 +86,9 @@ class _HistoryTile extends StatelessWidget {
     // Single tap: push the review screen using a Material route. We deliberately
     // avoid Hero animations or extra transitions to keep iteration fast.
     return ListTile(
+      key: ValueKey(
+        '${session.sourceUrl}|${session.endedAt.millisecondsSinceEpoch}',
+      ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       leading: _ThumbPair(session: session),
       title: Text(
@@ -123,17 +126,22 @@ class _ThumbPair extends StatelessWidget {
               aspectRatio: 1,
               child: DecoratedBox(
                 decoration: const BoxDecoration(color: kReferencePanelColor),
-                child: session.reference != null
-                    ? FittedBox(
+                child: session.referenceUrl != null
+                    // Prefer URL if available to avoid stale in-memory refs when
+                    // multiple images were viewed in a session.
+                    ? Image.network(
+                        session.referenceUrl!,
+                        key: ValueKey<String>(session.referenceUrl!),
                         fit: BoxFit.cover,
-                        child: RawImage(image: session.reference),
+                        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
                       )
-                    : (session.referenceUrl != null
-                          ? Image.network(
-                              session.referenceUrl!,
+                    : (session.reference != null
+                          ? FittedBox(
                               fit: BoxFit.cover,
-                              webHtmlElementStrategy:
-                                  WebHtmlElementStrategy.fallback,
+                              child: RawImage(
+                                image: session.reference,
+                                key: ValueKey<int>(session.reference.hashCode),
+                              ),
                             )
                           : const SizedBox.shrink()),
               ),
@@ -147,7 +155,10 @@ class _ThumbPair extends StatelessWidget {
                 decoration: const BoxDecoration(color: kPaperColor),
                 child: FittedBox(
                   fit: BoxFit.cover,
-                  child: RawImage(image: session.drawing),
+                  child: RawImage(
+                    image: session.drawing,
+                    key: ValueKey<int>(session.drawing.hashCode),
+                  ),
                 ),
               ),
             ),
