@@ -1,9 +1,8 @@
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/reference_search_service.dart';
-import 'practice_screen.dart';
 import 'session_runner_screen.dart';
 import 'history_screen.dart';
 
@@ -11,12 +10,8 @@ import 'history_screen.dart';
 // SearchScreen
 // ---------------------------------------------------------------------------
 // Lets the user enter e621 tags (rating:safe enforced automatically) and pick
-// a reference image to draw from.
-// Platform nuance:
-// - Native (desktop/mobile): we download + decode the image so we can access
-//   pixels for overlay review later.
-// - Web: CORS blocks pixel access, so we just pass the URL and use an <img>
-//   element (Image.network) side-by-side with the canvas.
+// a reference image to draw from. Adds selectable tiles, manual time input,
+// and an unlimited mode for session timing.
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -25,23 +20,27 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  // Pre-fill with a sample query to make first run feel alive.
   final _controller = TextEditingController(
     text: 'standing canine favcount:>100',
   );
   int _count = 5;
   int _seconds = 60;
-
-  // --- Lifecycle -----------------------------------------------------------
+  bool _unlimited = false;
+  final _secondsController = TextEditingController(text: '60');
+  final Set<String> _selectedIds = <String>{};
 
   @override
   void initState() {
     super.initState();
-    // Trigger an initial search after the first frame (avoids doing provider
-    // work during build).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ReferenceSearchService>().search(_controller.text);
     });
+  }
+
+  @override
+  void dispose() {
+    _secondsController.dispose();
+    super.dispose();
   }
 
   @override
@@ -51,6 +50,11 @@ class _SearchScreenState extends State<SearchScreen> {
       appBar: AppBar(
         title: const Text('Reference Search'),
         actions: [
+          if (_selectedIds.isNotEmpty)
+            TextButton(
+              onPressed: () => setState(() => _selectedIds.clear()),
+              child: Text('Clear (${_selectedIds.length})'),
+            ),
           IconButton(
             tooltip: 'History',
             icon: const Icon(Icons.history),
@@ -85,30 +89,77 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
                 const SizedBox(width: 16),
                 const Text('Seconds'),
-                IconButton(
-                  onPressed: () => setState(
-                    () => _seconds = (_seconds - 10).clamp(10, 3600),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 84,
+                  child: TextField(
+                    enabled: !_unlimited,
+                    controller: _secondsController,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 8,
+                      ),
+                      hintText: 'e.g. 60',
+                    ),
+                    onChanged: (v) {
+                      final parsed = int.tryParse(v) ?? _seconds;
+                      setState(() => _seconds = parsed.clamp(1, 3600));
+                    },
                   ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: '−10s',
+                  onPressed: _unlimited
+                      ? null
+                      : () => setState(() {
+                          _seconds = (_seconds - 10).clamp(1, 3600);
+                          _secondsController.text = '$_seconds';
+                        }),
                   icon: const Icon(Icons.remove),
                 ),
-                Text('$_seconds'),
                 IconButton(
-                  onPressed: () => setState(
-                    () => _seconds = (_seconds + 10).clamp(10, 3600),
-                  ),
+                  tooltip: '+10s',
+                  onPressed: _unlimited
+                      ? null
+                      : () => setState(() {
+                          _seconds = (_seconds + 10).clamp(1, 3600);
+                          _secondsController.text = '$_seconds';
+                        }),
                   icon: const Icon(Icons.add),
+                ),
+                const SizedBox(width: 12),
+                Row(
+                  children: [
+                    Checkbox(
+                      value: _unlimited,
+                      onChanged: (v) => setState(() {
+                        _unlimited = v ?? false;
+                      }),
+                    ),
+                    const Text('Unlimited'),
+                  ],
                 ),
                 const Spacer(),
                 FilledButton.icon(
                   onPressed: search.results.isEmpty
                       ? null
                       : () {
-                          final items = search.results.take(_count).toList();
+                          final all = search.results;
+                          final items = _selectedIds.isNotEmpty
+                              ? all
+                                    .where((r) => _selectedIds.contains(r.id))
+                                    .toList()
+                              : all.take(_count).toList();
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => SessionRunnerScreen(
                                 items: items,
-                                secondsPerImage: _seconds,
+                                secondsPerImage: _unlimited ? null : _seconds,
                               ),
                             ),
                           );
@@ -120,7 +171,6 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
           if (search.error != null) _ErrorBanner(message: search.error!),
-          // Expanded results grid.
           Expanded(
             child: GridView.builder(
               padding: const EdgeInsets.all(8),
@@ -130,54 +180,26 @@ class _SearchScreenState extends State<SearchScreen> {
                 crossAxisSpacing: 8,
               ),
               itemCount: search.results.length,
-              itemBuilder: (context, i) => _ResultTile(
-                result: search.results[i],
-                loadImage: search.loadImage,
-                onOpen: _openPractice,
-              ),
+              itemBuilder: (context, i) {
+                final r = search.results[i];
+                final selected = _selectedIds.contains(r.id);
+                return _ResultTile(
+                  result: r,
+                  selected: selected,
+                  onToggle: () {
+                    setState(() {
+                      if (selected) {
+                        _selectedIds.remove(r.id);
+                      } else {
+                        _selectedIds.add(r.id);
+                      }
+                    });
+                  },
+                );
+              },
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  // --- Navigation / handlers -----------------------------------------------
-
-  Future<void> _openPractice(ReferenceResult r) async {
-    // WHY: Separate method keeps the GestureDetector onTap concise & readable.
-    final navigator = Navigator.of(context);
-    if (kIsWeb) {
-      navigator.push(
-        MaterialPageRoute(
-          builder: (_) => PracticeScreen(
-            reference: null,
-            referenceUrl: r.fullUrl.isNotEmpty ? r.fullUrl : r.previewUrl,
-            sourceUrl: 'https://e621.net/posts/${r.id}',
-          ),
-        ),
-      );
-      return; // Early return—no further work for web path.
-    }
-    final messenger = ScaffoldMessenger.of(context);
-    ui.Image img;
-    try {
-      img = await context.read<ReferenceSearchService>().loadImage(r.fullUrl);
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text('Failed to load image: $e')),
-      );
-      return;
-    }
-    if (!mounted) return;
-    navigator.push(
-      MaterialPageRoute(
-        builder: (_) => PracticeScreen(
-          reference: img,
-          referenceUrl: null,
-          sourceUrl: 'https://e621.net/posts/${r.id}',
-        ),
       ),
     );
   }
@@ -238,17 +260,17 @@ class _ErrorBanner extends StatelessWidget {
 
 class _ResultTile extends StatelessWidget {
   final ReferenceResult result;
-  final Future<ui.Image> Function(String url) loadImage; // kept for symmetry
-  final Future<void> Function(ReferenceResult r) onOpen;
+  final bool selected;
+  final VoidCallback onToggle;
   const _ResultTile({
     required this.result,
-    required this.loadImage,
-    required this.onOpen,
+    required this.selected,
+    required this.onToggle,
   });
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => onOpen(result),
+      onTap: onToggle,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Stack(
@@ -290,6 +312,24 @@ class _ResultTile extends StatelessWidget {
                 ),
               ),
             ),
+            if (selected)
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.lightBlueAccent, width: 3),
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.lightBlueAccent.withOpacity(0.15),
+                ),
+              ),
+            if (selected)
+              const Positioned(
+                top: 6,
+                left: 6,
+                child: CircleAvatar(
+                  radius: 12,
+                  backgroundColor: Colors.lightBlue,
+                  child: Icon(Icons.check, size: 16, color: Colors.white),
+                ),
+              ),
           ],
         ),
       ),

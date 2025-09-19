@@ -15,7 +15,7 @@ import 'history_screen.dart';
 /// Drives a multi-image timed practice session.
 class SessionRunnerScreen extends StatefulWidget {
   final List<ReferenceResult> items;
-  final int secondsPerImage;
+  final int? secondsPerImage; // null => unlimited/manual finish
   const SessionRunnerScreen({
     super.key,
     required this.items,
