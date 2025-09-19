@@ -57,7 +57,7 @@ class _PracticeScreenState extends State<PracticeScreen>
   bool _handedOff = false; // Becomes true once we pass _base to ReviewScreen.
   bool _ctrlDown = false; // track Control key for panning mode
   final DebugProfiler _profiler = DebugProfiler();
-  bool _showProfilerHud = true; // toggle for on-screen profiler
+  bool _showProfilerHud = false; // toggle for on-screen profiler
   // Countdown state (session mode)
   Timer? _countdown;
   int _remainingSec = 0;
