@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../services/reference_search_service.dart';
 import 'practice_screen.dart';
 import 'session_runner_screen.dart';
+import 'history_screen.dart';
 
 // ---------------------------------------------------------------------------
 // SearchScreen
@@ -47,7 +48,18 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget build(BuildContext context) {
     final search = context.watch<ReferenceSearchService>();
     return Scaffold(
-      appBar: AppBar(title: const Text('Reference Search')),
+      appBar: AppBar(
+        title: const Text('Reference Search'),
+        actions: [
+          IconButton(
+            tooltip: 'History',
+            icon: const Icon(Icons.history),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const HistoryScreen())),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           _SearchBar(

@@ -4,6 +4,7 @@ import '../services/session_service.dart';
 import 'review_screen.dart';
 import '../models/practice_session.dart';
 import '../theme/colors.dart';
+import 'storage_diagnostics_screen.dart';
 
 // history_screen.dart
 // -------------------
@@ -32,7 +33,20 @@ class HistoryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final history = context.watch<SessionService>().history;
     return Scaffold(
-      appBar: AppBar(title: const Text('History')),
+      appBar: AppBar(
+        title: const Text('History'),
+        actions: [
+          IconButton(
+            tooltip: 'Storage diagnostics',
+            icon: const Icon(Icons.storage),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const StorageDiagnosticsScreen(),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: history.isEmpty
           ? const _EmptyHistoryMessage()
           : _HistoryList(sessions: history),
@@ -118,6 +132,8 @@ class _ThumbPair extends StatelessWidget {
                           ? Image.network(
                               session.referenceUrl!,
                               fit: BoxFit.cover,
+                              webHtmlElementStrategy:
+                                  WebHtmlElementStrategy.fallback,
                             )
                           : const SizedBox.shrink()),
               ),

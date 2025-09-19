@@ -181,7 +181,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
       // pinch-to-zoom, two-finger pan, ctrl+drag pan, and ctrl+wheel zoom.
       if (widget.reference == null && widget.referenceUrl != null) {
         final overlayWidget = _InteractiveUrlOverlay(
-          refChild: Image.network(widget.referenceUrl!, fit: BoxFit.contain),
+          refChild: Image.network(
+            widget.referenceUrl!,
+            fit: BoxFit.contain,
+            webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+          ),
           drawImg: widget.drawing,
           refOpacity: refOpacity,
           drawOpacity: drawOpacity,

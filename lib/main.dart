@@ -15,12 +15,19 @@ import 'package:provider/provider.dart';
 // Local project imports (grouped logically) ---------------------------------
 import 'services/reference_search_service.dart';
 import 'services/session_service.dart';
+import 'services/session_repository.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'services/persistence_util.dart';
 import 'screens/search_screen.dart';
 
 /// Application entry point. In Dart, execution starts with `main()`.
 /// `runApp` attaches the widget tree to the screen and starts the rendering
 /// + event (gesture) loop.
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  // Ask browser to make storage persistent (reduce eviction risk).
+  await requestPersistentStorage();
   runApp(const PoseTrainerApp());
 }
 
@@ -35,11 +42,13 @@ class PoseTrainerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final repo = HiveSessionRepository();
     return MultiProvider(
       // Shared service instances (only the flows we actively use).
       providers: [
+        Provider<SessionRepository>.value(value: repo),
         ChangeNotifierProvider(create: (_) => ReferenceSearchService()),
-        ChangeNotifierProvider(create: (_) => SessionService()),
+        ChangeNotifierProvider(create: (_) => SessionService(repo)..init()),
       ],
       child: MaterialApp(
         title: 'PoseTrainer',
