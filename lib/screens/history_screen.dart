@@ -126,7 +126,7 @@ class _ThumbPair extends StatelessWidget {
             child: AspectRatio(
               aspectRatio: 1,
               child: DecoratedBox(
-                decoration: const BoxDecoration(color: kReferencePanelColor),
+                decoration: const BoxDecoration(color: kPaperColor),
                 child: session.referenceUrl != null
                     // Prefer URL if available; contain to preserve aspect.
                     ? Image.network(
@@ -140,7 +140,7 @@ class _ThumbPair extends StatelessWidget {
                           ? LetterboxedImage(
                               key: ValueKey<int>(session.reference.hashCode),
                               image: session.reference!,
-                              background: kReferencePanelColor,
+                              background: kPaperColor,
                             )
                           : const SizedBox.shrink()),
               ),
