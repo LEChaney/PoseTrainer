@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 import 'dart:math' as math;
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -54,6 +55,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
   double drawOpacity = 1.0;
   double _scale = 1.0;
   Offset _offset = Offset.zero;
+  bool _showHint = true;
+  Timer? _hintTimer;
 
   @override
   void initState() {
@@ -61,6 +64,28 @@ class _ReviewScreenState extends State<ReviewScreen> {
     if (widget.initialOverlay != null) {
       _scale = widget.initialOverlay!.scale;
       _offset = widget.initialOverlay!.offset;
+    }
+    _scheduleHideHint();
+  }
+
+  @override
+  void dispose() {
+    _hintTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleHideHint() {
+    _hintTimer?.cancel();
+    _hintTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _showHint) {
+        setState(() => _showHint = false);
+      }
+    });
+  }
+
+  void _hideHintNow() {
+    if (_showHint) {
+      setState(() => _showHint = false);
     }
   }
 
@@ -117,7 +142,14 @@ class _ReviewScreenState extends State<ReviewScreen> {
               ButtonSegment(value: false, label: Text('Side-by-side')),
             ],
             selected: {overlay},
-            onSelectionChanged: (v) => setState(() => overlay = v.first),
+            onSelectionChanged: (v) => setState(() {
+              overlay = v.first;
+              if (overlay && !_showHint) {
+                // If user switches back to overlay, show hint briefly again
+                _showHint = true;
+                _scheduleHideHint();
+              }
+            }),
           )
         else
           const Text('Side-by-side only', style: TextStyle(fontSize: 12)),
@@ -148,7 +180,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
       // Wrap overlay modes in an interactive container that supports
       // pinch-to-zoom, two-finger pan, ctrl+drag pan, and ctrl+wheel zoom.
       if (widget.reference == null && widget.referenceUrl != null) {
-        return _InteractiveUrlOverlay(
+        final overlayWidget = _InteractiveUrlOverlay(
           refChild: Image.network(widget.referenceUrl!, fit: BoxFit.contain),
           drawImg: widget.drawing,
           refOpacity: refOpacity,
@@ -157,6 +189,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
           onTransform: (s, o) {
             _scale = s;
             _offset = o;
+            _hideHintNow();
             if (!widget.sessionControls) {
               context.read<SessionService>().updateLastOverlay(
                 OverlayTransform(scale: s, offset: o),
@@ -164,9 +197,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
             }
           },
         );
+        return Stack(
+          fit: StackFit.expand,
+          children: [overlayWidget, if (_showHint) _buildOverlayHint(context)],
+        );
       }
       if (widget.reference != null) {
-        return _InteractiveDecodedOverlay(
+        final overlayWidget = _InteractiveDecodedOverlay(
           refImg: widget.reference!,
           drawImg: widget.drawing,
           refOpacity: refOpacity,
@@ -175,12 +212,17 @@ class _ReviewScreenState extends State<ReviewScreen> {
           onTransform: (s, o) {
             _scale = s;
             _offset = o;
+            _hideHintNow();
             if (!widget.sessionControls) {
               context.read<SessionService>().updateLastOverlay(
                 OverlayTransform(scale: s, offset: o),
               );
             }
           },
+        );
+        return Stack(
+          fit: StackFit.expand,
+          children: [overlayWidget, if (_showHint) _buildOverlayHint(context)],
         );
       }
     }
@@ -192,6 +234,48 @@ class _ReviewScreenState extends State<ReviewScreen> {
       drawingChild: LetterboxedImage(
         image: widget.drawing,
         background: kPaperColor,
+      ),
+    );
+  }
+
+  /// Small bottom-center banner that hints interaction: pan/zoom controls.
+  Widget _buildOverlayHint(BuildContext context) {
+    final theme = Theme.of(context);
+    final bg = theme.colorScheme.surfaceVariant.withOpacity(0.95);
+    final fg = theme.colorScheme.onSurfaceVariant;
+    return IgnorePointer(
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 250),
+            opacity: _showHint ? 1 : 0,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    blurRadius: 6,
+                    color: Colors.black.withOpacity(0.15),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Text(
+                  'Drag to pan • Wheel to zoom • Pinch to zoom',
+                  style: theme.textTheme.bodySmall?.copyWith(color: fg),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
