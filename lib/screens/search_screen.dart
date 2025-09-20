@@ -317,7 +317,7 @@ class _ResultTile extends StatelessWidget {
                 decoration: BoxDecoration(
                   border: Border.all(color: Colors.lightBlueAccent, width: 3),
                   borderRadius: BorderRadius.circular(8),
-                  color: Colors.lightBlueAccent.withOpacity(0.15),
+                  color: Colors.lightBlueAccent.withValues(alpha: 0.15),
                 ),
               ),
             if (selected)

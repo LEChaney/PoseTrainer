@@ -95,17 +95,19 @@ class _StorageDiagnosticsScreenState extends State<StorageDiagnosticsScreen> {
     );
     if (ok != true) return;
     await clearAllStorage();
-    // Also refresh in-memory session list so UI updates immediately.
-    try {
-      context.read<SessionService>().clear();
-    } catch (_) {}
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    // Also refresh in-memory session list so UI updates immediately.
+    final sessionService = context.read<SessionService>();
+    try {
+      sessionService.clear();
+    } catch (_) {}
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
       const SnackBar(content: Text('Storage cleared. Reload the app.')),
     );
     setState(() {
       // Refresh diagnostics after clearing.
-      final sessions = context.read<SessionService>().history.length;
+      final sessions = sessionService.history.length;
       _future = getStorageInfo(sessionsCount: sessions);
     });
   }

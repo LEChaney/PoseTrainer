@@ -90,7 +90,7 @@ class BrushParams {
     return BrushParams(
       maxSizePx: maxSizePx ?? this.maxSizePx,
       spacing: spacing ?? this.spacing,
-      maxFlow: flow ?? this.maxFlow,
+      maxFlow: flow ?? maxFlow,
       minFlow: minFlow ?? this.minFlow,
       maxFlowPressure: maxFlowPressure ?? this.maxFlowPressure,
       minScale: minScale ?? this.minScale,

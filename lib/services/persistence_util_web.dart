@@ -1,11 +1,12 @@
-import 'dart:html' as html;
+import 'package:web/web.dart';
+import 'dart:js_interop';
 
 Future<bool> requestPersistentStorageImpl() async {
   try {
-    final storage = html.window.navigator.storage;
-    if (storage == null) return false;
-    final granted = await storage.persist();
-    return granted;
+    final storage = window.navigator.storage;
+    final grantedPromise = storage.persist();
+    final granted = await grantedPromise.toDart;
+    return granted.toDart;
   } catch (_) {
     return false;
   }

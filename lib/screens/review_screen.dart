@@ -245,7 +245,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
   /// Small bottom-center banner that hints interaction: pan/zoom controls.
   Widget _buildOverlayHint(BuildContext context) {
     final theme = Theme.of(context);
-    final bg = theme.colorScheme.surfaceVariant.withOpacity(0.95);
+    final bg = theme.colorScheme.surfaceContainerHighest.withValues(
+      alpha: 0.95,
+    );
     final fg = theme.colorScheme.onSurfaceVariant;
     return IgnorePointer(
       child: Align(
@@ -262,7 +264,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 boxShadow: [
                   BoxShadow(
                     blurRadius: 6,
-                    color: Colors.black.withOpacity(0.15),
+                    color: Colors.black.withValues(alpha: 0.15),
                   ),
                 ],
               ),
@@ -434,7 +436,7 @@ class _InteractiveDecodedOverlayState
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
-    if (_startFocal == null) _startFocal = details.focalPoint;
+    _startFocal ??= details.focalPoint;
     final s = details.scale;
     final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
     final anchor = details.focalPoint;
@@ -493,8 +495,8 @@ class _InteractiveDecodedOverlayState
   @override
   Widget build(BuildContext context) {
     final drawMatrix = Matrix4.identity()
-      ..translate(_offset.dx, _offset.dy)
-      ..scale(_scale, _scale);
+      ..translateByDouble(_offset.dx, _offset.dy, 0.0, 1.0)
+      ..scaleByDouble(_scale, _scale, 1.0, 1.0);
     return Listener(
       onPointerSignal: _onPointerSignal,
       onPointerDown: (e) {
@@ -586,7 +588,7 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
-    if (_startFocal == null) _startFocal = details.focalPoint;
+    _startFocal ??= details.focalPoint;
     final s = details.scale;
     final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
     final anchor = details.focalPoint;
@@ -645,8 +647,8 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
   @override
   Widget build(BuildContext context) {
     final drawMatrix = Matrix4.identity()
-      ..translate(_offset.dx, _offset.dy)
-      ..scale(_scale, _scale);
+      ..translateByDouble(_offset.dx, _offset.dy, 0.0, 1.0)
+      ..scaleByDouble(_scale, _scale, 1.0, 1.0);
     return Listener(
       onPointerSignal: _onPointerSignal,
       onPointerDown: (e) {
@@ -718,7 +720,7 @@ class _InteractiveOverlayState extends State<_InteractiveOverlay> {
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
-    if (_startFocal == null) _startFocal = details.focalPoint;
+    _startFocal ??= details.focalPoint;
     final s = details.scale;
     final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
     // anchor math: offset_t = F_t - s*(F0 - offset0)
@@ -781,8 +783,8 @@ class _InteractiveOverlayState extends State<_InteractiveOverlay> {
   @override
   Widget build(BuildContext context) {
     final matrix = Matrix4.identity()
-      ..translate(_offset.dx, _offset.dy)
-      ..scale(_scale, _scale);
+      ..translateByDouble(_offset.dx, _offset.dy, 0.0, 1.0)
+      ..scaleByDouble(_scale, _scale, 1.0, 1.0);
     return Focus(
       child: Listener(
         onPointerSignal: _onPointerSignal,

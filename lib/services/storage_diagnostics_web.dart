@@ -1,10 +1,32 @@
-import 'dart:html' as html;
+import 'package:web/web.dart';
+import 'dart:js_interop';
 import 'dart:async';
 import 'dart:typed_data';
-import 'package:file_system_access_api/file_system_access_api.dart' as fsa;
 import 'binary_store.dart';
 import 'storage_diagnostics.dart';
 import 'package:hive/hive.dart';
+
+// WASM-compatible OPFS interfaces for storage diagnostics
+@JS()
+@anonymous
+extension type FileSystemDirectoryHandle._(JSObject _) implements JSObject {
+  external JSPromise<FileSystemDirectoryHandle> getDirectoryHandle(String name);
+  external JSPromise<JSAny?> removeEntry(String name, [RemoveOptions? options]);
+}
+
+@JS()
+@anonymous
+extension type RemoveOptions._(JSObject _) implements JSObject {
+  external factory RemoveOptions({bool recursive});
+}
+
+// Storage Quota API interfaces
+@JS()
+@anonymous
+extension type StorageEstimate._(JSObject _) implements JSObject {
+  external JSNumber? get usage;
+  external JSNumber? get quota;
+}
 
 Future<StorageInfo> getStorageInfoImpl({required int sessionsCount}) async {
   final store = createBinaryStore();
@@ -14,19 +36,23 @@ Future<StorageInfo> getStorageInfoImpl({required int sessionsCount}) async {
   int? usage;
   int? quota;
   try {
-    final storage = html.window.navigator.storage;
-    if (storage != null) {
-      persistent = await storage.persisted();
-      final estimate = await storage.estimate();
-      if (estimate != null) {
-        final m = estimate as Map<dynamic, dynamic>;
-        final u = m['usage'];
-        final q = m['quota'];
-        usage = (u is num) ? u.toInt() : null;
-        quota = (q is num) ? q.toInt() : null;
-      }
-    }
-  } catch (_) {}
+    final storage = window.navigator.storage;
+    persistent = (await storage.persisted().toDart).toDart;
+
+    // Get storage estimate (usage and quota)
+    final estimatePromise = storage.estimate();
+    final estimate = await estimatePromise.toDart as StorageEstimate;
+
+    final usageJS = estimate.usage;
+    final quotaJS = estimate.quota;
+
+    usage = usageJS?.toDartInt;
+    quota = quotaJS?.toDartInt;
+  } catch (_) {
+    // Fallback if storage estimate fails
+    usage = null;
+    quota = null;
+  }
 
   return StorageInfo(
     opfsAvailable: opfsAvailable,
@@ -43,14 +69,14 @@ Future<void> clearAllStorageImpl() async {
   // 1) Try removing the entire OPFS sessions directory recursively.
   var opfsSessionsRemoved = false;
   try {
-    final fsa.FileSystemDirectoryHandle? root = await html
-        .window
-        .navigator
-        .storage
-        ?.getDirectory();
+    final FileSystemDirectoryHandle? root =
+        await window.navigator.storage.getDirectory().toDart
+            as FileSystemDirectoryHandle?;
     if (root != null) {
       try {
-        await root.removeEntry('sessions', recursive: true);
+        await root
+            .removeEntry('sessions', RemoveOptions(recursive: true))
+            .toDart;
         // ignore: avoid_print
         print('[Diag] OPFS: removed "/sessions" dir recursively');
       } catch (e) {
@@ -59,7 +85,7 @@ Future<void> clearAllStorageImpl() async {
       }
       // Verify presence post-deletion
       try {
-        await root.getDirectoryHandle('sessions');
+        await root.getDirectoryHandle('sessions').toDart;
         // ignore: avoid_print
         print('[Diag] OPFS: sessions dir still present after removal attempt');
       } catch (_) {

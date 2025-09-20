@@ -1,22 +1,87 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:html' as html;
-import 'dart:js_util' as jsu;
-import 'package:file_system_access_api/file_system_access_api.dart' as fsa;
+import 'package:web/web.dart';
+import 'dart:js_interop';
 import 'binary_store.dart';
 import 'binary_store_fallback.dart';
 
+// JavaScript interop interfaces for OPFS (WASM-compatible)
+@JS()
+@anonymous
+extension type FileSystemDirectoryHandle._(JSObject _) implements JSObject {
+  external JSPromise<FileSystemDirectoryHandle> getDirectoryHandle(
+    String name, [
+    FileSystemGetDirectoryOptions? options,
+  ]);
+  external JSPromise<FileSystemFileHandle> getFileHandle(
+    String name, [
+    FileSystemGetFileOptions? options,
+  ]);
+  external JSPromise<JSAny?> removeEntry(
+    String name, [
+    FileSystemRemoveOptions? options,
+  ]);
+}
+
+@JS()
+@anonymous
+extension type FileSystemFileHandle._(JSObject _) implements JSObject {
+  external JSPromise<File> getFile();
+  external JSPromise<FileSystemWritableFileStream> createWritable([
+    FileSystemCreateWritableOptions? options,
+  ]);
+}
+
+@JS()
+@anonymous
+extension type FileSystemWritableFileStream._(JSObject _) implements JSObject {
+  external JSPromise<JSAny?> write(JSAny data);
+  external JSPromise<JSAny?> close();
+}
+
+@JS()
+@anonymous
+extension type FileSystemGetDirectoryOptions._(JSObject _) implements JSObject {
+  external factory FileSystemGetDirectoryOptions({bool create});
+}
+
+@JS()
+@anonymous
+extension type FileSystemGetFileOptions._(JSObject _) implements JSObject {
+  external factory FileSystemGetFileOptions({bool create});
+}
+
+@JS()
+@anonymous
+extension type FileSystemRemoveOptions._(JSObject _) implements JSObject {
+  external factory FileSystemRemoveOptions({bool recursive});
+}
+
+@JS()
+@anonymous
+extension type FileSystemCreateWritableOptions._(JSObject _)
+    implements JSObject {
+  external factory FileSystemCreateWritableOptions({bool keepExistingData});
+}
+
+/// WASM-compatible OPFS implementation using dart:js_interop
 class OpfsBinaryStore implements BinaryStore {
-  fsa.FileSystemDirectoryHandle? _root;
+  FileSystemDirectoryHandle? _root;
 
   Future<void> _ensureRoot() async {
     if (_root != null) return;
-    _root = await html.window.navigator.storage?.getDirectory();
+    try {
+      final storage = window.navigator.storage;
+      final directoryPromise = storage.getDirectory();
+      final rootObj = await directoryPromise.toDart;
+      _root = rootObj as FileSystemDirectoryHandle;
+    } catch (_) {
+      _root = null;
+    }
   }
 
   @override
   Future<bool> isAvailable() async {
-    if (!fsa.FileSystemAccess.supported) return false;
     try {
       await _ensureRoot();
       return _root != null;
@@ -28,57 +93,86 @@ class OpfsBinaryStore implements BinaryStore {
   @override
   Future<void> write(String key, Uint8List bytes) async {
     await _ensureRoot();
-    final root = _root!;
-    // Ensure any subdirectories in key exist (e.g., 'sessions/123.png')
-    final parts = key.split('/');
-    fsa.FileSystemDirectoryHandle dir = root;
-    for (int i = 0; i < parts.length - 1; i++) {
-      dir = await dir.getDirectoryHandle(parts[i], create: true);
-    }
-    final file = await dir.getFileHandle(parts.last, create: true);
-    final stream = await file.createWritable();
-    // Use JS interop to call 'write' with a Blob, wrapped in try/catch.
+    final root = _root;
+    if (root == null) throw StateError('OPFS not available');
+
     try {
-      final blob = html.Blob([bytes]);
-      jsu.callMethod(stream as Object, 'write', [blob]);
-    } finally {
-      await stream.close();
+      // Split key into directory parts and filename
+      final parts = key.split('/');
+      FileSystemDirectoryHandle dir = root;
+
+      // Create subdirectories if needed
+      for (int i = 0; i < parts.length - 1; i++) {
+        dir = await dir
+            .getDirectoryHandle(
+              parts[i],
+              FileSystemGetDirectoryOptions(create: true),
+            )
+            .toDart;
+      }
+
+      // Create file handle
+      final fileHandle = await dir
+          .getFileHandle(parts.last, FileSystemGetFileOptions(create: true))
+          .toDart;
+
+      // Create writable stream
+      final stream = await fileHandle.createWritable().toDart;
+
+      try {
+        // Create blob from bytes
+        final jsBytes = bytes.toJS;
+        final blob = Blob([jsBytes].toJS);
+
+        // Write blob to stream
+        await stream.write(blob).toDart;
+      } finally {
+        // Close stream
+        await stream.close().toDart;
+      }
+
+      // Debug print to trace writes
+      // ignore: avoid_print
+      print('[OPFS] wrote ${bytes.length} bytes to $key');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[OPFS] write error for $key: $e');
+      rethrow;
     }
-    // Debug print to trace writes
-    // ignore: avoid_print
-    print('[OPFS] wrote ${bytes.length} bytes to $key');
   }
 
   @override
   Future<Uint8List?> read(String key) async {
     await _ensureRoot();
-    final root = _root!;
+    final root = _root;
+    if (root == null) return null;
+
     try {
       final parts = key.split('/');
-      fsa.FileSystemDirectoryHandle dir = root;
+      FileSystemDirectoryHandle dir = root;
+
+      // Navigate to subdirectories
       for (int i = 0; i < parts.length - 1; i++) {
-        dir = await dir.getDirectoryHandle(parts[i]);
+        dir = await dir.getDirectoryHandle(parts[i]).toDart;
       }
-      final file = await dir.getFileHandle(parts.last);
-      final html.File f = await file.getFile();
-      final reader = html.FileReader();
-      final completer = Completer<Uint8List>();
-      reader.onLoadEnd.listen((_) {
-        final result = reader.result;
-        if (result is ByteBuffer) {
-          completer.complete(Uint8List.view(result));
-        } else if (result is Uint8List) {
-          completer.complete(result);
-        } else {
-          completer.completeError(StateError('Unexpected FileReader result'));
-        }
-      });
-      reader.onError.listen((e) => completer.completeError(e));
-      reader.readAsArrayBuffer(f);
-      final out = await completer.future;
+
+      // Get file handle
+      final fileHandle = await dir.getFileHandle(parts.last).toDart;
+
+      // Get file
+      final file = await fileHandle.getFile().toDart;
+
+      // Read as array buffer
+      final arrayBufferPromise = file.arrayBuffer();
+      final arrayBuffer = await arrayBufferPromise.toDart;
+
+      // Convert to Uint8List
+      final jsUint8Array = JSUint8Array(arrayBuffer);
+      final dartBytes = jsUint8Array.toDart;
+
       // ignore: avoid_print
-      print('[OPFS] read ${out.length} bytes from $key');
-      return out;
+      print('[OPFS] read ${dartBytes.length} bytes from $key');
+      return dartBytes;
     } catch (_) {
       // ignore: avoid_print
       print('[OPFS] read miss for $key');
@@ -89,19 +183,26 @@ class OpfsBinaryStore implements BinaryStore {
   @override
   Future<void> delete(String key) async {
     await _ensureRoot();
-    final root = _root!;
+    final root = _root;
+    if (root == null) return;
+
     try {
       final parts = key.split('/');
-      fsa.FileSystemDirectoryHandle dir = root;
+      FileSystemDirectoryHandle dir = root;
+
+      // Navigate to parent directory
       for (int i = 0; i < parts.length - 1; i++) {
-        dir = await dir.getDirectoryHandle(parts[i]);
+        dir = await dir.getDirectoryHandle(parts[i]).toDart;
       }
-      try {
-        await dir.removeEntry(parts.last);
-        // ignore: avoid_print
-        print('[OPFS] deleted $key');
-      } catch (_) {}
-    } catch (_) {}
+
+      // Remove entry
+      await dir.removeEntry(parts.last).toDart;
+
+      // ignore: avoid_print
+      print('[OPFS] deleted $key');
+    } catch (_) {
+      // Silent failure for delete operations
+    }
   }
 }
 

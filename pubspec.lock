@@ -105,14 +105,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.1"
-  file_system_access_api:
-    dependency: "direct main"
-    description:
-      name: file_system_access_api
-      sha256: c961c5020ab4e5f05200dbdd9809c5256c3dc4a1fe5746ca7d8cf8e8cc11c47d
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.0.0"
   fixnum:
     dependency: transitive
     description:
@@ -179,14 +171,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.2"
-  js:
-    dependency: transitive
-    description:
-      name: js
-      sha256: "53385261521cc4a0c4658fd0ad07a7d14591cf8fc33abbceae306ddb974888dc"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.7.2"
   leak_tracker:
     dependency: transitive
     description:
@@ -489,7 +473,7 @@ packages:
     source: hosted
     version: "15.0.2"
   web:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: web
       sha256: "868d88a33d8a87b18ffc05f9f030ba328ffefba92d6c127917a2ba740f9cfe4a"

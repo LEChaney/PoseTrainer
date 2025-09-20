@@ -36,8 +36,8 @@ dependencies:
   # Local persistence (IndexedDB on Web, files on mobile/desktop)
   hive: ^2.2.3
   hive_flutter: ^1.1.0
-  # Web OPFS (Origin Private File System) access
-  file_system_access_api: ^2.0.0
+  # Modern web API access (WASM-compatible OPFS implementation)
+  web: ^1.1.0
   # Image caching (future: remote reference images)
   cached_network_image: ^3.4.1
   # HTTP client for e621 tag and image fetches
