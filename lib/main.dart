@@ -18,6 +18,8 @@ import 'services/session_service.dart';
 import 'services/session_repository.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'services/persistence_util.dart';
+import 'services/debug_logger.dart';
+import 'widgets/debug_overlay.dart';
 import 'screens/search_screen.dart';
 
 /// Application entry point. In Dart, execution starts with `main()`.
@@ -28,6 +30,10 @@ void main() async {
   await Hive.initFlutter();
   // Ask browser to make storage persistent (reduce eviction risk).
   await requestPersistentStorage();
+
+  // Initialize debug logging
+  infoLog('PoseTrainer starting up', tag: 'Main');
+
   runApp(const PoseTrainerApp());
 }
 
@@ -58,7 +64,7 @@ class PoseTrainerApp extends StatelessWidget {
           useMaterial3: true,
         ),
         // First screen presented to the user: search for a reference image.
-        home: const SearchScreen(),
+        home: const DebugOverlay(child: SearchScreen()),
       ),
     );
   }

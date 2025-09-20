@@ -7,6 +7,7 @@ import 'tiled_surface.dart';
 import 'dab_renderer.dart';
 import '../theme/colors.dart';
 import 'debug_profiler.dart';
+import 'debug_logger.dart';
 
 // ---------------------------------------------------------------------------
 // Brush Engine (single soft round brush)
@@ -347,13 +348,14 @@ class StrokeLayer {
   void draw(ui.Canvas canvas) {
     // Radial gradient dab with hardness-controlled core and feather.
     // hardness 0 => small core, long feather. hardness 1 => large core, short feather.
-    debugPrint('[StrokeLayer] Drawing ${_dabs.length} dabs');
+    debugLog('Drawing ${_dabs.length} dabs', tag: 'StrokeLayer');
     final coreRatio = coreRatioFromHardness(_hardness);
     for (final dab in _dabs) {
       final a = (dab.alpha * 255).clamp(0, 255).round();
       final centerColor = ui.Color.fromARGB(a, 255, 255, 255);
-      debugPrint(
-        '[StrokeLayer] Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=$a',
+      debugLog(
+        'Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=$a',
+        tag: 'StrokeLayer',
       );
       drawFeatheredDab(canvas, dab.center, dab.radius, centerColor, coreRatio);
     }
@@ -578,19 +580,20 @@ class BrushEngine extends ChangeNotifier {
   /// after all new points have been added so cost stays evenly distributed.
   Future<void> bakeLiveToTiles() async {
     if (live._dabs.isEmpty) {
-      debugPrint('[BrushEngine] bakeLiveToTiles: no live dabs to bake');
+      debugLog('bakeLiveToTiles: no live dabs to bake', tag: 'BrushEngine');
       return;
     }
-    debugPrint(
-      '[BrushEngine] Baking ${live._dabs.length} live dabs directly to tiles',
+    infoLog(
+      'Baking ${live._dabs.length} live dabs directly to tiles',
+      tag: 'BrushEngine',
     );
 
     // Direct baking: rasterize dabs immediately to their affected tiles
     await tiles.bakeDabs(live._dabs, coreRatioFromHardness(_hardness));
 
-    debugPrint('[BrushEngine] Clearing live dabs');
+    debugLog('Clearing live dabs', tag: 'BrushEngine');
     live.clear();
-    debugPrint('[BrushEngine] bakeLiveToTiles complete');
+    debugLog('bakeLiveToTiles complete', tag: 'BrushEngine');
     notifyListeners();
   }
 

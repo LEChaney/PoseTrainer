@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/reference_search_service.dart';
+import '../services/debug_logger.dart';
 import 'session_runner_screen.dart';
 import 'history_screen.dart';
+import 'debug_settings_screen.dart';
 
 // ---------------------------------------------------------------------------
 // SearchScreen
@@ -32,7 +34,12 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    infoLog('SearchScreen initialized', tag: 'SearchScreen');
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      infoLog(
+        'Starting initial search: ${_controller.text}',
+        tag: 'SearchScreen',
+      );
       context.read<ReferenceSearchService>().search(_controller.text);
     });
   }
@@ -62,6 +69,20 @@ class _SearchScreenState extends State<SearchScreen> {
               context,
             ).push(MaterialPageRoute(builder: (_) => const HistoryScreen())),
           ),
+          // Debug settings button (only in debug mode)
+          if (kDebugMode)
+            IconButton(
+              tooltip: 'Debug Settings',
+              icon: const Icon(Icons.bug_report),
+              onPressed: () {
+                infoLog('Opening debug settings', tag: 'SearchScreen');
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const DebugSettingsScreen(),
+                  ),
+                );
+              },
+            ),
         ],
       ),
       body: Column(
