@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:posetrainer/services/debug_logger.dart';
 import 'package:web/web.dart';
 import 'dart:js_interop';
 import 'binary_store.dart';
@@ -71,40 +72,38 @@ class OpfsBinaryStore implements BinaryStore {
   Future<void> _ensureRoot() async {
     if (_root != null) return;
     try {
-      debugPrint('[OPFS] Obtaining root directory handle...');
+      infoLog('[OPFS] Obtaining root directory handle...');
 
       // Check if we're in a secure context
       if (!window.isSecureContext) {
-        debugPrint(
+        infoLog(
           '[OPFS] ERROR: Not in secure context - OPFS requires HTTPS or localhost',
         );
-        debugPrint('[OPFS] Current location: ${window.location.href}');
+        infoLog('[OPFS] Current location: ${window.location.href}');
         throw StateError('OPFS requires secure context');
       }
-      debugPrint('[OPFS] ✓ Secure context confirmed');
+      infoLog('[OPFS] ✓ Secure context confirmed');
 
       // Get navigator.storage
       final navigator = window.navigator;
       final storage = navigator.storage;
-      debugPrint('[OPFS] ✓ navigator.storage found');
+      infoLog('[OPFS] ✓ navigator.storage found');
 
       // Try to call getDirectory - this is where most failures occur
-      debugPrint('[OPFS] Calling storage.getDirectory()...');
+      infoLog('[OPFS] Calling storage.getDirectory()...');
       final directoryPromise = storage.getDirectory();
-      debugPrint('[OPFS] ✓ getDirectory() call succeeded, awaiting promise...');
+      infoLog('[OPFS] ✓ getDirectory() call succeeded, awaiting promise...');
 
       final rootObj = await directoryPromise.toDart;
       _root = rootObj as FileSystemDirectoryHandle;
-      debugPrint('[OPFS] ✅ SUCCESS: Root directory handle obtained');
+      infoLog('[OPFS] ✅ SUCCESS: Root directory handle obtained');
     } catch (e, stackTrace) {
-      debugPrint('[OPFS] ❌ ERROR in _ensureRoot: $e');
-      debugPrint('[OPFS] Error type: ${e.runtimeType}');
+      errorLog('[OPFS] ❌ ERROR in _ensureRoot: $e');
+      infoLog('[OPFS] Error type: ${e.runtimeType}');
       if (e.toString().contains('getDirectory')) {
-        debugPrint(
-          '[OPFS] This browser may not support OPFS getDirectory method',
-        );
+        infoLog('[OPFS] This browser may not support OPFS getDirectory method');
       }
-      debugPrint('[OPFS] Stack trace: $stackTrace');
+      infoLog('[OPFS] Stack trace: $stackTrace');
       _root = null;
       rethrow;
     }
@@ -113,17 +112,17 @@ class OpfsBinaryStore implements BinaryStore {
   @override
   Future<bool> isAvailable() async {
     try {
-      debugPrint('[OPFS] 🔍 Checking availability...');
-      debugPrint('[OPFS] User Agent: ${window.navigator.userAgent}');
-      debugPrint('[OPFS] Location: ${window.location.href}');
-      debugPrint('[OPFS] Secure Context: ${window.isSecureContext}');
+      infoLog('[OPFS] 🔍 Checking availability...');
+      infoLog('[OPFS] User Agent: ${window.navigator.userAgent}');
+      infoLog('[OPFS] Location: ${window.location.href}');
+      infoLog('[OPFS] Secure Context: ${window.isSecureContext}');
 
       await _ensureRoot();
       final available = _root != null;
-      debugPrint('[OPFS] 🎯 Final availability result: $available');
+      infoLog('[OPFS] 🎯 Final availability result: $available');
       return available;
     } catch (e) {
-      debugPrint('[OPFS] ❌ isAvailable() failed: $e');
+      warningLog('[OPFS] ❌ isAvailable() failed: $e');
       return false;
     }
   }
@@ -171,10 +170,10 @@ class OpfsBinaryStore implements BinaryStore {
 
       // Debug print to trace writes
       // ignore: avoid_print
-      debugPrint('[OPFS] wrote ${bytes.length} bytes to $key');
+      infoLog('[OPFS] wrote ${bytes.length} bytes to $key');
     } catch (e) {
       // ignore: avoid_print
-      debugPrint('[OPFS] write error for $key: $e');
+      infoLog('[OPFS] write error for $key: $e');
       rethrow;
     }
   }
@@ -209,11 +208,11 @@ class OpfsBinaryStore implements BinaryStore {
       final dartBytes = jsUint8Array.toDart;
 
       // ignore: avoid_print
-      debugPrint('[OPFS] read ${dartBytes.length} bytes from $key');
+      infoLog('[OPFS] read ${dartBytes.length} bytes from $key');
       return dartBytes;
     } catch (_) {
       // ignore: avoid_print
-      debugPrint('[OPFS] read miss for $key');
+      warningLog('[OPFS] read miss for $key');
       return null;
     }
   }
@@ -237,7 +236,7 @@ class OpfsBinaryStore implements BinaryStore {
       await dir.removeEntry(parts.last).toDart;
 
       // ignore: avoid_print
-      debugPrint('[OPFS] deleted $key');
+      infoLog('[OPFS] deleted $key');
     } catch (_) {
       // Silent failure for delete operations
     }
@@ -250,52 +249,50 @@ class WebBinaryStore implements BinaryStore {
 
   WebBinaryStore({BinaryStore? fallback})
     : _fallback = fallback ?? HiveBinaryStore() {
-    debugPrint('[WebBinaryStore] 🏗️ Initialized with OPFS + Hive fallback');
+    infoLog('[WebBinaryStore] 🏗️ Initialized with OPFS + Hive fallback');
   }
 
   @override
   Future<bool> isAvailable() async {
-    debugPrint('[WebBinaryStore] 🔍 Checking if binary store is available...');
+    infoLog('[WebBinaryStore] 🔍 Checking if binary store is available...');
     final opfsAvailable = await _opfs.isAvailable();
-    debugPrint('[WebBinaryStore] OPFS available: $opfsAvailable');
+    infoLog('[WebBinaryStore] OPFS available: $opfsAvailable');
 
     if (opfsAvailable) return true;
 
     final fallbackAvailable = await _fallback.isAvailable();
-    debugPrint('[WebBinaryStore] Hive fallback available: $fallbackAvailable');
+    infoLog('[WebBinaryStore] Hive fallback available: $fallbackAvailable');
     return fallbackAvailable;
   }
 
   @override
   Future<void> write(String key, Uint8List bytes) async {
-    debugPrint(
-      '[WebBinaryStore] 📝 Writing ${bytes.length} bytes to key: $key',
-    );
+    infoLog('[WebBinaryStore] 📝 Writing ${bytes.length} bytes to key: $key');
     if (await _opfs.isAvailable()) {
-      debugPrint('[WebBinaryStore] Using OPFS for write');
+      infoLog('[WebBinaryStore] Using OPFS for write');
       await _opfs.write(key, bytes);
     } else {
-      debugPrint('[WebBinaryStore] Using Hive fallback for write');
+      infoLog('[WebBinaryStore] Using Hive fallback for write');
       await _fallback.write(key, bytes);
     }
   }
 
   @override
   Future<Uint8List?> read(String key) async {
-    debugPrint('[WebBinaryStore] 📖 Reading key: $key');
+    infoLog('[WebBinaryStore] 📖 Reading key: $key');
     if (await _opfs.isAvailable()) {
-      debugPrint('[WebBinaryStore] Trying OPFS read first');
+      infoLog('[WebBinaryStore] Trying OPFS read first');
       final r = await _opfs.read(key);
       if (r != null) {
-        debugPrint('[WebBinaryStore] OPFS read successful, ${r.length} bytes');
+        infoLog('[WebBinaryStore] OPFS read successful, ${r.length} bytes');
         return r;
       }
-      debugPrint('[WebBinaryStore] OPFS read miss, trying fallback');
+      warningLog('[WebBinaryStore] OPFS read miss, trying fallback');
     } else {
-      debugPrint('[WebBinaryStore] OPFS unavailable, using Hive fallback');
+      warningLog('[WebBinaryStore] OPFS unavailable, using Hive fallback');
     }
     final result = await _fallback.read(key);
-    debugPrint(
+    infoLog(
       '[WebBinaryStore] Fallback read result: ${result?.length ?? 0} bytes',
     );
     return result;

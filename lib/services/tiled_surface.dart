@@ -1,8 +1,8 @@
 import 'dart:ui' as ui;
-import 'package:flutter/foundation.dart';
 import 'debug_profiler.dart';
 import 'dab_renderer.dart';
 import 'brush_engine.dart'; // for Dab class
+import 'debug_logger.dart';
 
 /// Sparse tiled surface storing composited ink.
 /// Only tiles touched by brush dabs are rasterized; others stay absent.
@@ -32,11 +32,14 @@ class TiledSurface {
   /// This simplifies the flow by eliminating the addDab->flush pattern.
   Future<void> bakeDabs(List<Dab> dabs, double coreRatio) async {
     if (dabs.isEmpty) {
-      debugPrint('[TiledSurface] bakeDabs: no dabs to bake');
+      debugLog('bakeDabs: no dabs to bake', tag: 'TiledSurface');
       return;
     }
 
-    debugPrint('[TiledSurface] Baking ${dabs.length} dabs directly to tiles');
+    debugLog(
+      'Baking ${dabs.length} dabs directly to tiles',
+      tag: 'TiledSurface',
+    );
     profiler?.noteTileFlushStart();
 
     // Group dabs by affected tiles for batch processing
@@ -80,22 +83,25 @@ class TiledSurface {
     // Rasterize affected tiles in parallel
     final futures = <Future<void>>[];
     tileDabs.forEach((key, dabList) {
-      debugPrint(
-        '[TiledSurface] Rasterizing tile (${key.x}, ${key.y}) with ${dabList.length} dabs',
+      debugLog(
+        'Rasterizing tile (${key.x}, ${key.y}) with ${dabList.length} dabs',
+        tag: 'TiledSurface',
       );
       futures.add(_rasterizeTile(key, dabList));
     });
 
     await Future.wait(futures);
-    debugPrint(
-      '[TiledSurface] Baking complete, now have ${_tiles.length} total tiles',
+    debugLog(
+      'Baking complete, now have ${_tiles.length} total tiles',
+      tag: 'TiledSurface',
     );
     profiler?.noteTileFlushEnd();
   }
 
   Future<void> _rasterizeTile(_TileKey key, List<_PendingDab> dabs) async {
-    debugPrint(
-      '[TiledSurface] Rasterizing tile (${key.x}, ${key.y}) with ${dabs.length} dabs',
+    debugLog(
+      'Rasterizing tile (${key.x}, ${key.y}) with ${dabs.length} dabs',
+      tag: 'TiledSurface',
     );
     final start = DateTime.now().microsecondsSinceEpoch;
     final ts = tileSize.toDouble();
@@ -104,14 +110,15 @@ class TiledSurface {
     final canvas = ui.Canvas(recorder, rect);
     final existing = _tiles[key];
     if (existing != null) {
-      debugPrint('[TiledSurface] Building on existing tile');
+      debugLog('Building on existing tile', tag: 'TiledSurface');
       canvas.drawImage(existing, ui.Offset.zero, ui.Paint());
     }
     for (final d in dabs) {
       // Convert to tile local coordinates
       final local = d.center - d.tileOrigin;
-      debugPrint(
-        '[TiledSurface] Drawing dab at tile-local ${local}, radius=${d.radius.toStringAsFixed(1)}',
+      debugLog(
+        'Drawing dab at tile-local ${local}, radius=${d.radius.toStringAsFixed(1)}',
+        tag: 'TiledSurface',
       );
       // Render a radial alpha mask using a hard core up to coreRatio, then linear fade to edge
       drawFeatheredDab(canvas, local, d.radius, d.color, d.coreRatio);
@@ -119,8 +126,9 @@ class TiledSurface {
     final pic = recorder.endRecording();
     final img = await pic.toImage(tileSize, tileSize);
     existing?.dispose();
-    debugPrint(
-      '[TiledSurface] Tile (${key.x}, ${key.y}) rasterized successfully',
+    debugLog(
+      'Tile (${key.x}, ${key.y}) rasterized successfully',
+      tag: 'TiledSurface',
     );
     _tiles[key] = img;
     final end = DateTime.now().microsecondsSinceEpoch;
@@ -129,11 +137,12 @@ class TiledSurface {
 
   /// Draw all tiles by simple blit. Assumes caller sets up transform for viewport.
   void draw(ui.Canvas canvas) {
-    debugPrint('[TiledSurface] Drawing ${_tiles.length} tiles');
+    debugLog('Drawing ${_tiles.length} tiles', tag: 'TiledSurface');
     final paint = ui.Paint()..filterQuality = ui.FilterQuality.none;
     _tiles.forEach((key, img) {
-      debugPrint(
-        '[TiledSurface] Drawing tile (${key.x}, ${key.y}) at offset (${key.x * tileSize.toDouble()}, ${key.y * tileSize.toDouble()})',
+      debugLog(
+        'Drawing tile (${key.x}, ${key.y}) at offset (${key.x * tileSize.toDouble()}, ${key.y * tileSize.toDouble()})',
+        tag: 'TiledSurface',
       );
       canvas.drawImage(
         img,

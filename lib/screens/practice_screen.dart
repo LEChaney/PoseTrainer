@@ -14,6 +14,7 @@ import '../theme/colors.dart';
 // Layout constants consumed indirectly by ReferenceDrawSplit.
 import '../widgets/reference_draw_split.dart';
 import '../services/debug_profiler.dart';
+import '../services/debug_logger.dart';
 
 // practice_screen.dart
 // --------------------
@@ -119,24 +120,27 @@ class _PracticeScreenState extends State<PracticeScreen>
   void _onFrame(Duration _) {
     // Flush buffered pointer samples into the brush engine once per frame.
     if (_pending.isEmpty) return;
-    debugPrint('[Frame] Processing ${_pending.length} pending points');
+    debugLog('Processing ${_pending.length} pending points', tag: 'Frame');
     engine.addPoints(List.of(_pending));
     _pending.clear();
     // After adding new points, bake existing live dabs for constant cost.
     // Await to keep ordering predictable; work is per-dab small.
     engine.bakeLiveToTiles();
     _profiler.noteFrameFlush();
-    debugPrint('[Frame] Frame processing complete');
+    debugLog('Frame processing complete', tag: 'Frame');
   }
 
   void _flushPending() {
     if (_pending.isEmpty) return;
-    debugPrint('[Flush] Manually flushing ${_pending.length} pending points');
+    debugLog(
+      'Manually flushing ${_pending.length} pending points',
+      tag: 'Flush',
+    );
     engine.addPoints(List.of(_pending));
     _pending.clear();
     engine.bakeLiveToTiles();
     _profiler.noteFrameFlush();
-    debugPrint('[Flush] Manual flush complete');
+    debugLog('Manual flush complete', tag: 'Flush');
   }
 
   Future<void> _commitStroke() async {
@@ -309,8 +313,9 @@ class _PracticeScreenState extends State<PracticeScreen>
       final exactW = snappedLogicalSize.width * dpr;
       final exactH = snappedLogicalSize.height * dpr;
       if (exactW % 1 != 0 || exactH % 1 != 0) {
-        debugPrint(
-          'WARNING: snapped size not integral: $exactW x $exactH (dpr=$dpr)',
+        warningLog(
+          'Snapped size not integral: $exactW x $exactH (dpr=$dpr)',
+          tag: 'PracticeScreen',
         );
       }
       return true;
@@ -446,17 +451,21 @@ class _CanvasAreaState extends State<_CanvasArea> {
                 widget.ctrlDown || (_multiPan && _touchPoints.length >= 2);
 
             // Debug logging for touch issues
-            debugPrint(
-              '[Touch] PointerDown: kind=${e.kind}, touchCount=${_touchPoints.length}, multiPan=$_multiPan, shouldPan=$shouldPan',
+            infoLog(
+              'PointerDown: kind=${e.kind}, touchCount=${_touchPoints.length}, multiPan=$_multiPan, shouldPan=$shouldPan',
+              tag: 'Touch',
             );
 
             if (shouldPan) {
               _lastPanPos = e.localPosition;
-              debugPrint('[Touch] Starting pan mode');
+              infoLog('Starting pan mode', tag: 'Touch');
             } else {
               await widget.applyPendingGrowth();
               _addPoint(e, logicalSize, reset: true);
-              debugPrint('[Touch] Adding drawing point at ${e.localPosition}');
+              debugLog(
+                'Adding drawing point at ${e.localPosition}',
+                tag: 'Touch',
+              );
             }
           },
           onPointerMove: (e) {
@@ -605,22 +614,24 @@ class _CanvasAreaState extends State<_CanvasArea> {
     final imgX = widget.viewportOriginPx.dx + e.localPosition.dx * dpr;
     final imgY = widget.viewportOriginPx.dy + e.localPosition.dy * dpr;
 
-    debugPrint(
-      '[Touch] _addPoint: local=${e.localPosition}, dpr=$dpr, img=($imgX, $imgY), bounds=(${widget.baseWidthPx}, ${widget.baseHeightPx})',
+    debugLog(
+      '_addPoint: local=${e.localPosition}, dpr=$dpr, img=($imgX, $imgY), bounds=(${widget.baseWidthPx}, ${widget.baseHeightPx})',
+      tag: 'Touch',
     );
 
     if (imgX < 0 ||
         imgY < 0 ||
         imgX >= widget.baseWidthPx ||
         imgY >= widget.baseHeightPx) {
-      debugPrint('[Touch] Point outside bounds, ignoring');
+      debugLog('Point outside bounds, ignoring', tag: 'Touch');
       return; // outside canvas bounds
     }
     widget.pending.add(
       InputPoint(imgX, imgY, widget.pressure(e), widget.nowMs()),
     );
-    debugPrint(
-      '[Touch] Added point to pending list, total pending: ${widget.pending.length}',
+    debugLog(
+      'Added point to pending list, total pending: ${widget.pending.length}',
+      tag: 'Touch',
     );
   }
 }
@@ -779,11 +790,11 @@ class _PracticePainter extends CustomPainter {
       );
       canvas.saveLayer(bounds, ui.Paint());
       // Draw white-alpha tiles and live dabs
-      debugPrint('[Painter] Drawing tiles and live dabs');
+      debugLog('Drawing tiles and live dabs', tag: 'Painter');
       engine.tiles.draw(canvas);
-      debugPrint('[Painter] Drawing live stroke layer');
+      debugLog('Drawing live stroke layer', tag: 'Painter');
       live.draw(canvas);
-      debugPrint('[Painter] Applying tint');
+      debugLog('Applying tint', tag: 'Painter');
       // Apply tint via srcIn
       final tintPaint = ui.Paint()
         ..blendMode = ui.BlendMode.srcIn

@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart'; // for ChangeNotifier
 import 'package:vector_math/vector_math_64.dart'
     show Vector2; // Unified 2D math
 import 'tiled_surface.dart';
@@ -517,8 +517,9 @@ class BrushEngine extends ChangeNotifier {
         _lastDabPos = filtered.clone();
         final radius = diameter * 0.5;
         final alpha = flow * params.opacity;
-        debugPrint(
-          '[BrushEngine] First dab: pos=${filtered.x.toStringAsFixed(1)},${filtered.y.toStringAsFixed(1)}, radius=${radius.toStringAsFixed(2)}, alpha=${alpha.toStringAsFixed(3)}, pressure=${p.pressure.toStringAsFixed(3)}',
+        debugLog(
+          'First dab: pos=${filtered.x.toStringAsFixed(1)},${filtered.y.toStringAsFixed(1)}, radius=${radius.toStringAsFixed(2)}, alpha=${alpha.toStringAsFixed(3)}, pressure=${p.pressure.toStringAsFixed(3)}',
+          tag: 'BrushEngine',
         );
         yield Dab(ui.Offset(filtered.x, filtered.y), radius, alpha);
         continue;
@@ -543,8 +544,9 @@ class BrushEngine extends ChangeNotifier {
         dabsEmitted++;
       }
       if (dabsEmitted > 0) {
-        debugPrint(
-          '[BrushEngine] Emitted $dabsEmitted interpolated dabs, dist=${dist.toStringAsFixed(1)}, spacing=${spacingPx.toStringAsFixed(1)}',
+        debugLog(
+          'Emitted $dabsEmitted interpolated dabs, dist=${dist.toStringAsFixed(1)}, spacing=${spacingPx.toStringAsFixed(1)}',
+          tag: 'BrushEngine',
         );
       }
       _lastDabPos = filtered.clone();
@@ -554,7 +556,7 @@ class BrushEngine extends ChangeNotifier {
   // Add new raw points (e.g., from pointer events). Notifies listeners so the
   // CustomPainter can repaint the live stroke.
   void addPoints(List<InputPoint> pts) {
-    debugPrint('[BrushEngine] addPoints called with ${pts.length} points');
+    debugLog('addPoints called with ${pts.length} points', tag: 'BrushEngine');
     // Maintain raw history for curvature estimation.
     for (final p in pts) {
       _rawPrev2 = _rawPrev1;
@@ -565,12 +567,13 @@ class BrushEngine extends ChangeNotifier {
       live.add(d);
       dabCount++;
     }
-    debugPrint(
-      '[BrushEngine] Generated $dabCount dabs, live dabs total: ${live._dabs.length}',
+    debugLog(
+      'Generated $dabCount dabs, live dabs total: ${live._dabs.length}',
+      tag: 'BrushEngine',
     );
     if (pts.isNotEmpty) {
       notifyListeners();
-      debugPrint('[BrushEngine] Notified listeners for repaint');
+      debugLog('Notified listeners for repaint', tag: 'BrushEngine');
     }
   }
 
