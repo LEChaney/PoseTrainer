@@ -69,8 +69,8 @@ class BrushParams {
     this.hardness = 1.0,
     this.opacity = 1.0,
     this.color = kBrushDarkDefault,
-    this.runtimeSizeScale = 0.07,
-    this.runtimeFlowScale = 0.06,
+    this.runtimeSizeScale = 0.75,
+    this.runtimeFlowScale = 0.3,
   });
 
   BrushParams copyWith({
@@ -415,7 +415,7 @@ class BrushEngine extends ChangeNotifier {
   // Runtime multipliers (temporary before full preset UI). These *only*
   // scale size and flow curves; base param object stays immutable.
   double _runtimeSizeScale = 0.1; // 1.0 => use params.sizePx
-  double _runtimeFlowScale = 0.08; // 1.0 => use computed flow as-is
+  double _runtimeFlowScale = 0.5; // 1.0 => use computed flow as-is
 
   // Expose current runtime controls so UI can initialize from engine state.
   double get sizeScale => _runtimeSizeScale;
@@ -521,6 +521,10 @@ class BrushEngine extends ChangeNotifier {
           'First dab: pos=${filtered.x.toStringAsFixed(1)},${filtered.y.toStringAsFixed(1)}, radius=${radius.toStringAsFixed(2)}, alpha=${alpha.toStringAsFixed(3)}, pressure=${p.pressure.toStringAsFixed(3)}',
           tag: 'BrushEngine',
         );
+        debugLog(
+          'Flow calc: sp=${sp.toStringAsFixed(3)}, flowNorm=${flowNorm.toStringAsFixed(3)}, flowCurve=${flowCurve.toStringAsFixed(3)}, baseFlow=${baseFlow.toStringAsFixed(3)}, flow=${flow.toStringAsFixed(3)}, runtimeFlowScale=${_runtimeFlowScale.toStringAsFixed(3)}',
+          tag: 'BrushEngine',
+        );
         yield Dab(ui.Offset(filtered.x, filtered.y), radius, alpha);
         continue;
       }
@@ -539,6 +543,13 @@ class BrushEngine extends ChangeNotifier {
         final pos = lastPos + dir * traveled;
         final radius = diameter * 0.5;
         final alpha = flow * params.opacity;
+        if (dabsEmitted == 0) {
+          // Only log for first interpolated dab to avoid spam
+          debugLog(
+            'Interpolated dab: alpha=${alpha.toStringAsFixed(3)}, flow=${flow.toStringAsFixed(3)}, opacity=${params.opacity.toStringAsFixed(3)}',
+            tag: 'BrushEngine',
+          );
+        }
         yield Dab(ui.Offset(pos.x, pos.y), radius, alpha);
         traveled += spacingPx;
         dabsEmitted++;

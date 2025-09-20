@@ -107,14 +107,45 @@ class _PracticeScreenState extends State<PracticeScreen>
   int _nowMs() => DateTime.now().millisecondsSinceEpoch;
 
   double _pressure(dynamic e) {
-    // Normalize hardware pressure range to 0..1 (fallback 0.5 when unknown).
+    const kFallbackPressure = 0.1;
+
+    // Normalize hardware pressure range to 0..1 (fallback 0.1 when unknown).
     if (e is PointerEvent) {
       final denom = (e.pressureMax - e.pressureMin);
-      if (denom == 0) return 0.5;
+      debugLog(
+        'Pressure debug: kind=${e.kind}, raw=${e.pressure}, min=${e.pressureMin}, max=${e.pressureMax}, denom=$denom',
+        tag: 'Pressure',
+      );
+
+      // Special handling for touch devices - many report pressure as 0 even when touching
+      if (e.kind == PointerDeviceKind.touch) {
+        // For touch, if pressure is 0 or the range is 0, assume medium pressure
+        if (e.pressure == 0.0 || denom == 0) {
+          debugLog(
+            'Touch device with no pressure data, using $kFallbackPressure',
+            tag: 'Pressure',
+          );
+          return kFallbackPressure;
+        }
+      }
+
+      if (denom == 0) {
+        debugLog(
+          'No pressure range, using fallback $kFallbackPressure',
+          tag: 'Pressure',
+        );
+        return kFallbackPressure;
+      }
       final v = ((e.pressure - e.pressureMin) / denom).clamp(0.0, 1.0);
-      return v.isFinite ? v : 0.5;
+      final result = v.isFinite ? v : kFallbackPressure;
+      debugLog('Normalized pressure: $result', tag: 'Pressure');
+      return result;
     }
-    return 0.5;
+    debugLog(
+      'Non-PointerEvent, using fallback $kFallbackPressure',
+      tag: 'Pressure',
+    );
+    return kFallbackPressure;
   }
 
   void _onFrame(Duration _) {
@@ -645,7 +676,7 @@ class _BrushSliders extends StatefulWidget {
 
 class _BrushSlidersState extends State<_BrushSliders> {
   double _size = 0.1; // runtime size multiplier (initialized in initState)
-  double _flow = 0.08; // runtime flow multiplier (initialized in initState)
+  double _flow = 0.5; // runtime flow multiplier (initialized in initState)
   double _hardness = 1.0; // initialized in initState
 
   @override
