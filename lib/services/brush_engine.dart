@@ -328,6 +328,9 @@ class StrokeLayer {
   final List<Dab> _dabs = [];
   double _hardness = 0.8; // 0 = very soft (wide halo), 1 = hard (thin halo)
 
+  /// Public getter for dab count (for debugging)
+  int get dabCount => _dabs.length;
+
   Future<void> ensureSprite(double hardness) async {
     // Retained for interface compatibility; no sprite needed now.
     _hardness = hardness.clamp(0, 1);
@@ -344,10 +347,14 @@ class StrokeLayer {
   void draw(ui.Canvas canvas) {
     // Radial gradient dab with hardness-controlled core and feather.
     // hardness 0 => small core, long feather. hardness 1 => large core, short feather.
+    debugPrint('[StrokeLayer] Drawing ${_dabs.length} dabs');
     final coreRatio = coreRatioFromHardness(_hardness);
     for (final dab in _dabs) {
       final a = (dab.alpha * 255).clamp(0, 255).round();
       final centerColor = ui.Color.fromARGB(a, 255, 255, 255);
+      debugPrint(
+        '[StrokeLayer] Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=$a',
+      );
       drawFeatheredDab(canvas, dab.center, dab.radius, centerColor, coreRatio);
     }
   }
@@ -506,11 +513,12 @@ class BrushEngine extends ChangeNotifier {
       // --- Emit first dab immediately ---------------------------------------
       if (_lastDabPos == null) {
         _lastDabPos = filtered.clone();
-        yield Dab(
-          ui.Offset(filtered.x, filtered.y),
-          diameter * 0.5,
-          flow * params.opacity,
+        final radius = diameter * 0.5;
+        final alpha = flow * params.opacity;
+        debugPrint(
+          '[BrushEngine] First dab: pos=${filtered.x.toStringAsFixed(1)},${filtered.y.toStringAsFixed(1)}, radius=${radius.toStringAsFixed(2)}, alpha=${alpha.toStringAsFixed(3)}, pressure=${p.pressure.toStringAsFixed(3)}',
         );
+        yield Dab(ui.Offset(filtered.x, filtered.y), radius, alpha);
         continue;
       }
 
@@ -523,14 +531,19 @@ class BrushEngine extends ChangeNotifier {
       }
       final dir = delta / dist; // normalized
       var traveled = spacingPx;
+      int dabsEmitted = 0;
       while (traveled <= dist) {
         final pos = lastPos + dir * traveled;
-        yield Dab(
-          ui.Offset(pos.x, pos.y),
-          diameter * 0.5,
-          flow * params.opacity,
-        );
+        final radius = diameter * 0.5;
+        final alpha = flow * params.opacity;
+        yield Dab(ui.Offset(pos.x, pos.y), radius, alpha);
         traveled += spacingPx;
+        dabsEmitted++;
+      }
+      if (dabsEmitted > 0) {
+        debugPrint(
+          '[BrushEngine] Emitted $dabsEmitted interpolated dabs, dist=${dist.toStringAsFixed(1)}, spacing=${spacingPx.toStringAsFixed(1)}',
+        );
       }
       _lastDabPos = filtered.clone();
     }
@@ -539,35 +552,45 @@ class BrushEngine extends ChangeNotifier {
   // Add new raw points (e.g., from pointer events). Notifies listeners so the
   // CustomPainter can repaint the live stroke.
   void addPoints(List<InputPoint> pts) {
+    debugPrint('[BrushEngine] addPoints called with ${pts.length} points');
     // Maintain raw history for curvature estimation.
     for (final p in pts) {
       _rawPrev2 = _rawPrev1;
       _rawPrev1 = p;
     }
+    int dabCount = 0;
     for (final d in _emit(pts)) {
       live.add(d);
+      dabCount++;
     }
-    if (pts.isNotEmpty) notifyListeners();
+    debugPrint(
+      '[BrushEngine] Generated $dabCount dabs, live dabs total: ${live._dabs.length}',
+    );
+    if (pts.isNotEmpty) {
+      notifyListeners();
+      debugPrint('[BrushEngine] Notified listeners for repaint');
+    }
   }
 
   // _maybeHandleCorner removed: curvature-based blending supplants explicit snapping.
 
-  /// Bake current live dabs into tiles and clear live list. Called once per frame
+  /// Bake current live dabs directly into tiles and clear live list. Called once per frame
   /// after all new points have been added so cost stays evenly distributed.
   Future<void> bakeLiveToTiles() async {
-    if (live._dabs.isEmpty) return;
-    // Convert each dab into pending tile work.
-    // Pre-multiply color per dab alpha.
-    for (final d in live._dabs) {
-      final a = (d.alpha * 255).clamp(0, 255).round();
-      if (a == 0) continue;
-      final color = ui.Color.fromARGB(a, 255, 255, 255);
-      final coreRatio = coreRatioFromHardness(_hardness);
-      tiles.addDab(d.center, d.radius, color, coreRatio: coreRatio);
+    if (live._dabs.isEmpty) {
+      debugPrint('[BrushEngine] bakeLiveToTiles: no live dabs to bake');
+      return;
     }
+    debugPrint(
+      '[BrushEngine] Baking ${live._dabs.length} live dabs directly to tiles',
+    );
+
+    // Direct baking: rasterize dabs immediately to their affected tiles
+    await tiles.bakeDabs(live._dabs, coreRatioFromHardness(_hardness));
+
+    debugPrint('[BrushEngine] Clearing live dabs');
     live.clear();
-    // Flush asynchronously; caller may await if they need deterministic completion.
-    await tiles.flush();
+    debugPrint('[BrushEngine] bakeLiveToTiles complete');
     notifyListeners();
   }
 

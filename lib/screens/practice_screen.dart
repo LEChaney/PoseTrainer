@@ -119,20 +119,24 @@ class _PracticeScreenState extends State<PracticeScreen>
   void _onFrame(Duration _) {
     // Flush buffered pointer samples into the brush engine once per frame.
     if (_pending.isEmpty) return;
+    debugPrint('[Frame] Processing ${_pending.length} pending points');
     engine.addPoints(List.of(_pending));
     _pending.clear();
     // After adding new points, bake existing live dabs for constant cost.
     // Await to keep ordering predictable; work is per-dab small.
     engine.bakeLiveToTiles();
     _profiler.noteFrameFlush();
+    debugPrint('[Frame] Frame processing complete');
   }
 
   void _flushPending() {
     if (_pending.isEmpty) return;
+    debugPrint('[Flush] Manually flushing ${_pending.length} pending points');
     engine.addPoints(List.of(_pending));
     _pending.clear();
     engine.bakeLiveToTiles();
     _profiler.noteFrameFlush();
+    debugPrint('[Flush] Manual flush complete');
   }
 
   Future<void> _commitStroke() async {
@@ -419,7 +423,7 @@ class _CanvasAreaState extends State<_CanvasArea> {
             widget.profiler.notePointerSample();
             if (e.kind == PointerDeviceKind.touch) {
               _touchPoints[e.pointer] = e.localPosition;
-              if (_touchPoints.length == 2) {
+              if (_touchPoints.length >= 2) {
                 _multiPan = true;
                 // Capture image-space locations under each finger so we can
                 // compute a viewport that keeps those pixels under the fingers
@@ -430,13 +434,29 @@ class _CanvasAreaState extends State<_CanvasArea> {
                   final imgPt = widget.viewportOriginPx + entry.value * dpr;
                   _multiPanImagePoints[entry.key] = imgPt;
                 }
+              } else {
+                // Single touch - ensure we're not in multi-pan mode
+                _multiPan = false;
+                _multiPanImagePoints.clear();
               }
             }
-            if (widget.ctrlDown || _multiPan) {
+
+            // Determine if this should be panning or drawing
+            final shouldPan =
+                widget.ctrlDown || (_multiPan && _touchPoints.length >= 2);
+
+            // Debug logging for touch issues
+            debugPrint(
+              '[Touch] PointerDown: kind=${e.kind}, touchCount=${_touchPoints.length}, multiPan=$_multiPan, shouldPan=$shouldPan',
+            );
+
+            if (shouldPan) {
               _lastPanPos = e.localPosition;
+              debugPrint('[Touch] Starting pan mode');
             } else {
               await widget.applyPendingGrowth();
               _addPoint(e, logicalSize, reset: true);
+              debugPrint('[Touch] Adding drawing point at ${e.localPosition}');
             }
           },
           onPointerMove: (e) {
@@ -445,8 +465,15 @@ class _CanvasAreaState extends State<_CanvasArea> {
                 _touchPoints.containsKey(e.pointer)) {
               _touchPoints[e.pointer] = e.localPosition;
             }
-            if (widget.ctrlDown || _multiPan) {
-              if (_multiPan && e.kind == PointerDeviceKind.touch) {
+
+            // Determine if this should be panning or drawing
+            final shouldPan =
+                widget.ctrlDown || (_multiPan && _touchPoints.length >= 2);
+
+            if (shouldPan) {
+              if (_multiPan &&
+                  e.kind == PointerDeviceKind.touch &&
+                  _touchPoints.length >= 2) {
                 _handleTwoFingerPan(logicalSize, viewWidthPx, viewHeightPx);
               } else {
                 _handlePanMove(e, logicalSize, viewWidthPx, viewHeightPx);
@@ -466,7 +493,11 @@ class _CanvasAreaState extends State<_CanvasArea> {
                 _multiPanImagePoints.clear();
               }
             }
-            if (!(widget.ctrlDown || _multiPan)) {
+
+            // Only commit stroke if we were in drawing mode (not panning)
+            final wasPanning =
+                widget.ctrlDown || (_multiPan && _touchPoints.length >= 1);
+            if (!wasPanning) {
               widget.flushPending();
               await widget.commitStroke();
             }
@@ -475,7 +506,10 @@ class _CanvasAreaState extends State<_CanvasArea> {
           onPointerCancel: (e) {
             if (e.kind == PointerDeviceKind.touch) {
               _touchPoints.remove(e.pointer);
-              if (_touchPoints.length < 2) _multiPan = false;
+              if (_touchPoints.length < 2) {
+                _multiPan = false;
+                _multiPanImagePoints.clear();
+              }
             }
             _lastPanPos = null;
           },
@@ -570,14 +604,23 @@ class _CanvasAreaState extends State<_CanvasArea> {
     final dpr = widget.devicePixelRatio;
     final imgX = widget.viewportOriginPx.dx + e.localPosition.dx * dpr;
     final imgY = widget.viewportOriginPx.dy + e.localPosition.dy * dpr;
+
+    debugPrint(
+      '[Touch] _addPoint: local=${e.localPosition}, dpr=$dpr, img=($imgX, $imgY), bounds=(${widget.baseWidthPx}, ${widget.baseHeightPx})',
+    );
+
     if (imgX < 0 ||
         imgY < 0 ||
         imgX >= widget.baseWidthPx ||
         imgY >= widget.baseHeightPx) {
+      debugPrint('[Touch] Point outside bounds, ignoring');
       return; // outside canvas bounds
     }
     widget.pending.add(
       InputPoint(imgX, imgY, widget.pressure(e), widget.nowMs()),
+    );
+    debugPrint(
+      '[Touch] Added point to pending list, total pending: ${widget.pending.length}',
     );
   }
 }
@@ -736,8 +779,11 @@ class _PracticePainter extends CustomPainter {
       );
       canvas.saveLayer(bounds, ui.Paint());
       // Draw white-alpha tiles and live dabs
+      debugPrint('[Painter] Drawing tiles and live dabs');
       engine.tiles.draw(canvas);
+      debugPrint('[Painter] Drawing live stroke layer');
       live.draw(canvas);
+      debugPrint('[Painter] Applying tint');
       // Apply tint via srcIn
       final tintPaint = ui.Paint()
         ..blendMode = ui.BlendMode.srcIn
