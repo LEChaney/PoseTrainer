@@ -33,9 +33,9 @@ dependencies:
 
   # State management
   provider: ^6.0.5
-  # Local persistence (IndexedDB on Web, files on mobile/desktop)
-  hive: ^2.2.3
-  hive_flutter: ^1.1.0
+  # Local persistence (IndexedDB on Web, files on mobile/desktop) - WASM-compatible community fork
+  hive_ce: ^2.13.2
+  hive_ce_flutter: ^2.3.2
   # Modern web API access (WASM-compatible OPFS implementation)
   web: ^1.1.0
   # Image caching (future: remote reference images)

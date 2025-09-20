@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:web/web.dart';
 import 'dart:js_interop';
 import 'binary_store.dart';
 import 'binary_store_fallback.dart';
+import 'package:flutter/foundation.dart';
 
 // JavaScript interop interfaces for OPFS (WASM-compatible)
 @JS()
@@ -71,11 +71,13 @@ class OpfsBinaryStore implements BinaryStore {
   Future<void> _ensureRoot() async {
     if (_root != null) return;
     try {
+      debugPrint('[OPFS] obtaining root directory handle');
       final storage = window.navigator.storage;
       final directoryPromise = storage.getDirectory();
       final rootObj = await directoryPromise.toDart;
       _root = rootObj as FileSystemDirectoryHandle;
     } catch (_) {
+      debugPrint('[OPFS] failed to obtain root directory handle');
       _root = null;
     }
   }

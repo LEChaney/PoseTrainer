@@ -16,7 +16,7 @@ import 'package:provider/provider.dart';
 import 'services/reference_search_service.dart';
 import 'services/session_service.dart';
 import 'services/session_repository.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'services/persistence_util.dart';
 import 'screens/search_screen.dart';
 

@@ -4,7 +4,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'binary_store.dart';
 import 'storage_diagnostics.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 
 // WASM-compatible OPFS interfaces for storage diagnostics
 @JS()
