@@ -151,7 +151,7 @@ class HiveSessionRepository implements SessionRepository {
       _box = Hive.box<Map>(boxName);
     }
     // ignore: avoid_print
-    print('[Repo] box "$boxName" open; entries=${_box!.length}');
+    debugPrint('[Repo] box "$boxName" open; entries=${_box!.length}');
   }
 
   @override
@@ -162,7 +162,7 @@ class HiveSessionRepository implements SessionRepository {
     int malformed = 0;
     final keysIterable = _box!.keys.toList(growable: false);
     // ignore: avoid_print
-    print('[Repo] loadAll: keys=${keysIterable.length}');
+    debugPrint('[Repo] loadAll: keys=${keysIterable.length}');
     for (final k in keysIterable) {
       final m = _box!.get(k);
       if (m == null) continue;
@@ -179,7 +179,7 @@ class HiveSessionRepository implements SessionRepository {
     result.sort((a, b) => b.endedAtMs.compareTo(a.endedAtMs));
     final dedup = keysIterable.length - (result.length + malformed);
     // ignore: avoid_print
-    print(
+    debugPrint(
       '[Repo] loadAll -> sessions=${result.length} (malformed=$malformed, dedup=$dedup)',
     );
     return result;
@@ -190,7 +190,7 @@ class HiveSessionRepository implements SessionRepository {
     await init();
     await _box!.put(session.id, session.toMap());
     // ignore: avoid_print
-    print(
+    debugPrint(
       '[Repo] saved id=${session.id} path=${session.drawingPath ?? ''} bytes=${session.drawingPng.length}',
     );
   }
@@ -206,7 +206,7 @@ class HiveSessionRepository implements SessionRepository {
     m['overlayDy'] = overlay.offset.dy;
     await _box!.put(id, m);
     // ignore: avoid_print
-    print(
+    debugPrint(
       '[Repo] overlay updated id=$id scale=${overlay.scale} dx=${overlay.offset.dx} dy=${overlay.offset.dy}',
     );
   }

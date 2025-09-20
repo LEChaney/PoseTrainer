@@ -1,10 +1,10 @@
 import 'package:web/web.dart';
 import 'dart:js_interop';
 import 'dart:async';
-import 'dart:typed_data';
 import 'binary_store.dart';
 import 'storage_diagnostics.dart';
 import 'package:hive_ce/hive.dart';
+import 'package:flutter/foundation.dart';
 
 // WASM-compatible OPFS interfaces for storage diagnostics
 @JS()
@@ -65,7 +65,7 @@ Future<StorageInfo> getStorageInfoImpl({required int sessionsCount}) async {
 
 Future<void> clearAllStorageImpl() async {
   // ignore: avoid_print
-  print('[Diag] clearAllStorage: begin');
+  debugPrint('[Diag] clearAllStorage: begin');
   // 1) Try removing the entire OPFS sessions directory recursively.
   var opfsSessionsRemoved = false;
   try {
@@ -78,19 +78,21 @@ Future<void> clearAllStorageImpl() async {
             .removeEntry('sessions', RemoveOptions(recursive: true))
             .toDart;
         // ignore: avoid_print
-        print('[Diag] OPFS: removed "/sessions" dir recursively');
+        debugPrint('[Diag] OPFS: removed "/sessions" dir recursively');
       } catch (e) {
         // ignore: avoid_print
-        print('[Diag] OPFS: recursive remove failed; will scan by paths');
+        debugPrint('[Diag] OPFS: recursive remove failed; will scan by paths');
       }
       // Verify presence post-deletion
       try {
         await root.getDirectoryHandle('sessions').toDart;
         // ignore: avoid_print
-        print('[Diag] OPFS: sessions dir still present after removal attempt');
+        debugPrint(
+          '[Diag] OPFS: sessions dir still present after removal attempt',
+        );
       } catch (_) {
         // ignore: avoid_print
-        print('[Diag] OPFS: sessions dir not found after removal attempt');
+        debugPrint('[Diag] OPFS: sessions dir not found after removal attempt');
         opfsSessionsRemoved = true;
       }
     }
@@ -106,7 +108,7 @@ Future<void> clearAllStorageImpl() async {
             ? Hive.box<Map>('sessions')
             : await Hive.openBox<Map>('sessions');
         // ignore: avoid_print
-        print(
+        debugPrint(
           '[Diag] clearAllStorage: scanning ${sessionsBox.length} session maps for drawingPath',
         );
         for (final key in sessionsBox.keys) {
@@ -117,13 +119,13 @@ Future<void> clearAllStorageImpl() async {
             if (p is String && p.isNotEmpty) {
               await store.delete(p);
               // ignore: avoid_print
-              print('[Diag] clearAllStorage: deleted OPFS $p');
+              debugPrint('[Diag] clearAllStorage: deleted OPFS $p');
             }
           }
         }
         await sessionsBox.close();
         // ignore: avoid_print
-        print('[Diag] clearAllStorage: closed scanning box "sessions"');
+        debugPrint('[Diag] clearAllStorage: closed scanning box "sessions"');
       }
     }
   } catch (_) {}
@@ -134,12 +136,12 @@ Future<void> clearAllStorageImpl() async {
     final hadSessionsOpen = Hive.isBoxOpen('sessions');
     final hadBlobsOpen = Hive.isBoxOpen('session_blobs');
     // ignore: avoid_print
-    print(
+    debugPrint(
       '[Diag] Hive: before global close -> sessionsOpen=$hadSessionsOpen, blobsOpen=$hadBlobsOpen',
     );
     await Hive.close();
     // ignore: avoid_print
-    print('[Diag] Hive: closed all boxes');
+    debugPrint('[Diag] Hive: closed all boxes');
 
     // Helper to delete with timeout and clear fallback.
     Future<void> deleteBoxSafely({
@@ -148,19 +150,21 @@ Future<void> clearAllStorageImpl() async {
       required Future<void> Function() clearFallback,
     }) async {
       // ignore: avoid_print
-      print('[Diag] Hive: deleting box "$name" via static delete');
+      debugPrint('[Diag] Hive: deleting box "$name" via static delete');
       try {
         await deleteStatic().timeout(const Duration(seconds: 3));
         // ignore: avoid_print
-        print('[Diag] clearAllStorage: deleted Hive box "$name"');
+        debugPrint('[Diag] clearAllStorage: deleted Hive box "$name"');
       } on TimeoutException {
         // ignore: avoid_print
-        print(
+        debugPrint(
           '[Diag] Hive: delete "$name" timed out; attempting clear() fallback',
         );
         await clearFallback();
         // ignore: avoid_print
-        print('[Diag] clearAllStorage: cleared all entries in box "$name"');
+        debugPrint(
+          '[Diag] clearAllStorage: cleared all entries in box "$name"',
+        );
       }
     }
 
@@ -173,7 +177,7 @@ Future<void> clearAllStorageImpl() async {
         await b.clear();
         await b.close();
         // ignore: avoid_print
-        print('[Diag] Hive: sessions clear() removed $n entries');
+        debugPrint('[Diag] Hive: sessions clear() removed $n entries');
       },
     );
 
@@ -186,13 +190,13 @@ Future<void> clearAllStorageImpl() async {
         await b.clear();
         await b.close();
         // ignore: avoid_print
-        print('[Diag] Hive: session_blobs clear() removed $n entries');
+        debugPrint('[Diag] Hive: session_blobs clear() removed $n entries');
       },
     );
   } catch (e) {
     // ignore: avoid_print
-    print('[Diag] clearAllStorage: Hive deletion step threw: $e');
+    debugPrint('[Diag] clearAllStorage: Hive deletion step threw: $e');
   }
   // ignore: avoid_print
-  print('[Diag] clearAllStorage: end');
+  debugPrint('[Diag] clearAllStorage: end');
 }

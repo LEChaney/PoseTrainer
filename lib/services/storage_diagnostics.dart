@@ -1,5 +1,5 @@
 import 'storage_diagnostics_stub.dart'
-    if (dart.library.html) 'storage_diagnostics_web.dart';
+    if (dart.library.js_interop) 'storage_diagnostics_web.dart';
 
 class StorageInfo {
   final bool opfsAvailable;

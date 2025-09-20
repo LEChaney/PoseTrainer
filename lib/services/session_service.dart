@@ -34,7 +34,7 @@ class SessionService extends ChangeNotifier {
     // while init() was still loading). Keep newest-first and dedupe by ID.
     final merged = _mergeSessions(decoded, _history);
     // ignore: avoid_print
-    print(
+    debugPrint(
       '[Svc] init: loaded=${decoded.length} inMemory=${_history.length} merged=${merged.length}',
     );
     _history
@@ -115,7 +115,7 @@ class SessionService extends ChangeNotifier {
     _history.insert(0, session);
     notifyListeners();
     // ignore: avoid_print
-    print(
+    debugPrint(
       '[Svc] add: id=${endedAt.millisecondsSinceEpoch} inserted historyCount=${_history.length}',
     );
     final id = endedAt.millisecondsSinceEpoch.toString();
@@ -130,9 +130,11 @@ class SessionService extends ChangeNotifier {
         path = candidate;
         toPersist = Uint8List(0); // do not duplicate in Hive
         // ignore: avoid_print
-        print('[Svc] add: wrote OPFS $candidate');
+        debugPrint(
+          '[Svc] add: wrote binary store $candidate (backend: ${bin.runtimeType})',
+        );
       } catch (_) {
-        // keep Hive bytes if OPFS write failed
+        // keep Hive bytes if write failed
         path = null;
       }
     }

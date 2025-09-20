@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'binary_store_fallback.dart'
-    if (dart.library.html) 'binary_store_web.dart';
+    if (dart.library.js_interop) 'binary_store_web.dart';
 
 abstract class BinaryStore {
   Future<bool> isAvailable();
