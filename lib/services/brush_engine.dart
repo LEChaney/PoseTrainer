@@ -328,6 +328,7 @@ class StrokeLayer {
   // circles directly; a lightweight blur provides soft edges.
   final List<Dab> _dabs = [];
   double _hardness = 0.8; // 0 = very soft (wide halo), 1 = hard (thin halo)
+  int _dabLogCount = 0; // Rate limiting for per-dab logging
 
   /// Public getter for dab count (for debugging)
   int get dabCount => _dabs.length;
@@ -341,22 +342,52 @@ class StrokeLayer {
     _hardness = h.clamp(0, 1);
   }
 
-  void clear() => _dabs.clear();
+  void clear() {
+    _dabs.clear();
+  }
 
   void add(Dab d) => _dabs.add(d);
 
-  void draw(ui.Canvas canvas) {
+  void draw(
+    ui.Canvas canvas, {
+    double? maxSizePx,
+    double? spacing,
+    double? runtimeSizeScale,
+  }) {
     // Radial gradient dab with hardness-controlled core and feather.
     // hardness 0 => small core, long feather. hardness 1 => large core, short feather.
-    debugLog('Drawing ${_dabs.length} dabs', tag: 'StrokeLayer');
     final coreRatio = coreRatioFromHardness(_hardness);
+
+    // Calculate dynamic logging rate based on brush parameters
+    // Smaller brushes with tighter spacing generate more dabs, so log less frequently
+    int logRate = 100000; // Default rate
+    if (maxSizePx != null && spacing != null && runtimeSizeScale != null) {
+      final effectiveSize = maxSizePx * runtimeSizeScale;
+      final dabsPerPixel =
+          1.0 / spacing; // Approximate dabs per pixel of movement
+      final expectedDabRate =
+          dabsPerPixel / effectiveSize; // Higher for small brushes
+
+      // Scale log rate inversely with expected dab generation rate
+      // Small brushes (high dab rate) -> higher log rate (less frequent logging)
+      // Large brushes (low dab rate) -> lower log rate (more frequent logging)
+      logRate = (100 * expectedDabRate).clamp(50, 1000000).round();
+    }
+
+    int i = 0;
     for (final dab in _dabs) {
       final a = (dab.alpha * 255).clamp(0, 255).round();
       final centerColor = ui.Color.fromARGB(a, 255, 255, 255);
-      debugLog(
-        'Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=$a',
-        tag: 'StrokeLayer',
-      );
+      // Smart rate-limited logging based on brush parameters
+
+      if (_dabLogCount % logRate == 0) {
+        debugLog(
+          'Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=$a (${i + 1}/${_dabs.length}) [logRate=$logRate]',
+          tag: 'StrokeLayer',
+        );
+      }
+      _dabLogCount++;
+      i++;
       drawFeatheredDab(canvas, dab.center, dab.radius, centerColor, coreRatio);
     }
   }
@@ -538,28 +569,21 @@ class BrushEngine extends ChangeNotifier {
       }
       final dir = delta / dist; // normalized
       var traveled = spacingPx;
-      int dabsEmitted = 0;
       while (traveled <= dist) {
         final pos = lastPos + dir * traveled;
         final radius = diameter * 0.5;
         final alpha = flow * params.opacity;
-        if (dabsEmitted == 0) {
-          // Only log for first interpolated dab to avoid spam
-          debugLog(
-            'Interpolated dab: alpha=${alpha.toStringAsFixed(3)}, flow=${flow.toStringAsFixed(3)}, opacity=${params.opacity.toStringAsFixed(3)}',
-            tag: 'BrushEngine',
-          );
-        }
+        // Per-dab logging removed (too verbose)
         yield Dab(ui.Offset(pos.x, pos.y), radius, alpha);
         traveled += spacingPx;
-        dabsEmitted++;
       }
-      if (dabsEmitted > 0) {
-        debugLog(
-          'Emitted $dabsEmitted interpolated dabs, dist=${dist.toStringAsFixed(1)}, spacing=${spacingPx.toStringAsFixed(1)}',
-          tag: 'BrushEngine',
-        );
-      }
+      // Remove per-stroke interpolation logging (too verbose for normal drawing)
+      // if (dabsEmitted > 0) {
+      //   debugLog(
+      //     'Emitted $dabsEmitted interpolated dabs, dist=${dist.toStringAsFixed(1)}, spacing=${spacingPx.toStringAsFixed(1)}',
+      //     tag: 'BrushEngine',
+      //   );
+      // }
       _lastDabPos = filtered.clone();
     }
   }
@@ -567,7 +591,13 @@ class BrushEngine extends ChangeNotifier {
   // Add new raw points (e.g., from pointer events). Notifies listeners so the
   // CustomPainter can repaint the live stroke.
   void addPoints(List<InputPoint> pts) {
-    debugLog('addPoints called with ${pts.length} points', tag: 'BrushEngine');
+    // Only log when processing large point batches (reduce normal drawing noise)
+    if (pts.length > 10) {
+      debugLog(
+        'addPoints called with ${pts.length} points',
+        tag: 'BrushEngine',
+      );
+    }
     // Maintain raw history for curvature estimation.
     for (final p in pts) {
       _rawPrev2 = _rawPrev1;
@@ -578,13 +608,26 @@ class BrushEngine extends ChangeNotifier {
       live.add(d);
       dabCount++;
     }
-    debugLog(
-      'Generated $dabCount dabs, live dabs total: ${live._dabs.length}',
-      tag: 'BrushEngine',
-    );
+
+    // Calculate dynamic logging threshold based on brush parameters
+    // Smaller brushes with tighter spacing generate more dabs, so require higher thresholds
+    final effectiveSize = params.maxSizePx * _runtimeSizeScale;
+    final dabsPerPixel = 1.0 / params.spacing;
+    final expectedDabRate = dabsPerPixel / effectiveSize;
+
+    // Scale threshold: small brushes need higher thresholds to avoid spam
+    final logThreshold = (10 * expectedDabRate).clamp(5, 50).round();
+
+    // Smart logging based on brush characteristics
+    if (pts.length > logThreshold) {
+      debugLog(
+        'Generated $dabCount dabs, live dabs total: ${live._dabs.length} [threshold=$logThreshold, effectiveSize=${effectiveSize.toStringAsFixed(1)}px]',
+        tag: 'BrushEngine',
+      );
+    }
     if (pts.isNotEmpty) {
       notifyListeners();
-      debugLog('Notified listeners for repaint', tag: 'BrushEngine');
+      // Listener notification logging removed (too verbose)
     }
   }
 
@@ -594,20 +637,23 @@ class BrushEngine extends ChangeNotifier {
   /// after all new points have been added so cost stays evenly distributed.
   Future<void> bakeLiveToTiles() async {
     if (live._dabs.isEmpty) {
-      debugLog('bakeLiveToTiles: no live dabs to bake', tag: 'BrushEngine');
+      // No need to log empty baking calls (too verbose)
       return;
     }
-    infoLog(
-      'Baking ${live._dabs.length} live dabs directly to tiles',
-      tag: 'BrushEngine',
-    );
 
     // Direct baking: rasterize dabs immediately to their affected tiles
-    await tiles.bakeDabs(live._dabs, coreRatioFromHardness(_hardness));
+    await tiles.bakeDabs(
+      live._dabs,
+      coreRatioFromHardness(_hardness),
+      maxSizePx: params.maxSizePx,
+      spacing: params.spacing,
+      runtimeSizeScale: _runtimeSizeScale,
+    );
 
-    debugLog('Clearing live dabs', tag: 'BrushEngine');
+    // Reduce baking completion logging (too verbose)
+    // debugLog('Clearing live dabs', tag: 'BrushEngine');
     live.clear();
-    debugLog('bakeLiveToTiles complete', tag: 'BrushEngine');
+    // debugLog('bakeLiveToTiles complete', tag: 'BrushEngine');
     notifyListeners();
   }
 

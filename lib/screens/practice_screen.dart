@@ -59,6 +59,7 @@ class _PracticeScreenState extends State<PracticeScreen>
   bool _ctrlDown = false; // track Control key for panning mode
   final DebugProfiler _profiler = DebugProfiler();
   bool _showProfilerHud = false; // toggle for on-screen profiler
+  int _pressureLogCount = 0; // Limit pressure logging verbosity
   // Countdown state (session mode)
   Timer? _countdown;
   int _remainingSec = 0;
@@ -112,57 +113,78 @@ class _PracticeScreenState extends State<PracticeScreen>
     // Normalize hardware pressure range to 0..1 (fallback 0.1 when unknown).
     if (e is PointerEvent) {
       final denom = (e.pressureMax - e.pressureMin);
-      debugLog(
-        'Pressure debug: kind=${e.kind}, raw=${e.pressure}, min=${e.pressureMin}, max=${e.pressureMax}, denom=$denom',
-        tag: 'Pressure',
-      );
+      _pressureLogCount++;
+
+      // Rate-limited pressure debugging: log every ~10,000 samples
+      final shouldLog =
+          _pressureLogCount % 10000 == 0 || denom == 0 || e.pressure == 0.0;
+      if (shouldLog) {
+        debugLog(
+          'Pressure debug (sample #$_pressureLogCount): kind=${e.kind}, raw=${e.pressure}, min=${e.pressureMin}, max=${e.pressureMax}, denom=$denom',
+          tag: 'Pressure',
+        );
+      }
 
       // Special handling for touch devices - many report pressure as 0 even when touching
       if (e.kind == PointerDeviceKind.touch) {
         // For touch, if pressure is 0 or the range is 0, assume medium pressure
         if (e.pressure == 0.0 || denom == 0) {
-          debugLog(
-            'Touch device with no pressure data, using $kFallbackPressure',
-            tag: 'Pressure',
-          );
+          if (shouldLog) {
+            debugLog(
+              'Touch device with no pressure data, using $kFallbackPressure',
+              tag: 'Pressure',
+            );
+          }
           return kFallbackPressure;
         }
       }
 
       if (denom == 0) {
-        debugLog(
-          'No pressure range, using fallback $kFallbackPressure',
-          tag: 'Pressure',
-        );
+        if (shouldLog) {
+          debugLog(
+            'No pressure range, using fallback $kFallbackPressure',
+            tag: 'Pressure',
+          );
+        }
         return kFallbackPressure;
       }
       final v = ((e.pressure - e.pressureMin) / denom).clamp(0.0, 1.0);
       final result = v.isFinite ? v : kFallbackPressure;
-      debugLog('Normalized pressure: $result', tag: 'Pressure');
+      // Rate-limited normalized pressure logging
+      if (shouldLog) {
+        debugLog('Normalized pressure: $result', tag: 'Pressure');
+      }
       return result;
     }
-    debugLog(
-      'Non-PointerEvent, using fallback $kFallbackPressure',
-      tag: 'Pressure',
-    );
+    // Rate-limited logging for non-PointerEvent cases
+    _pressureLogCount++;
+    if (_pressureLogCount % 10000 == 0) {
+      debugLog(
+        'Non-PointerEvent (sample #$_pressureLogCount), using fallback $kFallbackPressure',
+        tag: 'Pressure',
+      );
+    }
     return kFallbackPressure;
   }
 
   void _onFrame(Duration _) {
     // Flush buffered pointer samples into the brush engine once per frame.
     if (_pending.isEmpty) return;
-    debugLog('Processing ${_pending.length} pending points', tag: 'Frame');
+    // Only log frame processing when there are many points (burst activity)
+    if (_pending.length > 5) {
+      debugLog('Processing ${_pending.length} pending points', tag: 'Frame');
+    }
     engine.addPoints(List.of(_pending));
     _pending.clear();
     // After adding new points, bake existing live dabs for constant cost.
     // Await to keep ordering predictable; work is per-dab small.
     engine.bakeLiveToTiles();
     _profiler.noteFrameFlush();
-    debugLog('Frame processing complete', tag: 'Frame');
   }
 
   void _flushPending() {
     if (_pending.isEmpty) return;
+    // Only log manual flushes (less common than frame flushes)
     debugLog(
       'Manually flushing ${_pending.length} pending points',
       tag: 'Flush',
@@ -171,7 +193,6 @@ class _PracticeScreenState extends State<PracticeScreen>
     _pending.clear();
     engine.bakeLiveToTiles();
     _profiler.noteFrameFlush();
-    debugLog('Manual flush complete', tag: 'Flush');
   }
 
   Future<void> _commitStroke() async {
@@ -645,10 +666,11 @@ class _CanvasAreaState extends State<_CanvasArea> {
     final imgX = widget.viewportOriginPx.dx + e.localPosition.dx * dpr;
     final imgY = widget.viewportOriginPx.dy + e.localPosition.dy * dpr;
 
-    debugLog(
-      '_addPoint: local=${e.localPosition}, dpr=$dpr, img=($imgX, $imgY), bounds=(${widget.baseWidthPx}, ${widget.baseHeightPx})',
-      tag: 'Touch',
-    );
+    // Reduce touch coordinate logging (too verbose for normal use)
+    // debugLog(
+    //   '_addPoint: local=${e.localPosition}, dpr=$dpr, img=($imgX, $imgY), bounds=(${widget.baseWidthPx}, ${widget.baseHeightPx})',
+    //   tag: 'Touch',
+    // );
 
     if (imgX < 0 ||
         imgY < 0 ||
@@ -660,10 +682,11 @@ class _CanvasAreaState extends State<_CanvasArea> {
     widget.pending.add(
       InputPoint(imgX, imgY, widget.pressure(e), widget.nowMs()),
     );
-    debugLog(
-      'Added point to pending list, total pending: ${widget.pending.length}',
-      tag: 'Touch',
-    );
+    // Reduce per-point logging (too verbose for normal use)
+    // debugLog(
+    //   'Added point to pending list, total pending: ${widget.pending.length}',
+    //   tag: 'Touch',
+    // );
   }
 }
 
@@ -821,11 +844,14 @@ class _PracticePainter extends CustomPainter {
       );
       canvas.saveLayer(bounds, ui.Paint());
       // Draw white-alpha tiles and live dabs
-      debugLog('Drawing tiles and live dabs', tag: 'Painter');
+      // Per-frame paint operation logging removed (too verbose)
       engine.tiles.draw(canvas);
-      debugLog('Drawing live stroke layer', tag: 'Painter');
-      live.draw(canvas);
-      debugLog('Applying tint', tag: 'Painter');
+      live.draw(
+        canvas,
+        maxSizePx: engine.params.maxSizePx,
+        spacing: engine.params.spacing,
+        runtimeSizeScale: engine.sizeScale,
+      );
       // Apply tint via srcIn
       final tintPaint = ui.Paint()
         ..blendMode = ui.BlendMode.srcIn

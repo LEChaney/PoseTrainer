@@ -11,6 +11,7 @@ class TiledSurface {
   final int tileSize; // Edge length in pixels (power of two preferred)
   final Map<_TileKey, ui.Image> _tiles = {};
   final DebugProfiler? profiler;
+  int _dabLogCount = 0; // Count of dabs processed (for logging)
 
   TiledSurface({this.tileSize = 256, this.profiler});
 
@@ -30,16 +31,18 @@ class TiledSurface {
 
   /// Directly bake a list of dabs into tiles without intermediate pending state.
   /// This simplifies the flow by eliminating the addDab->flush pattern.
-  Future<void> bakeDabs(List<Dab> dabs, double coreRatio) async {
+  Future<void> bakeDabs(
+    List<Dab> dabs,
+    double coreRatio, {
+    double? maxSizePx,
+    double? spacing,
+    double? runtimeSizeScale,
+  }) async {
     if (dabs.isEmpty) {
-      debugLog('bakeDabs: no dabs to bake', tag: 'TiledSurface');
+      // No need to log empty baking calls (too verbose)
       return;
     }
 
-    debugLog(
-      'Baking ${dabs.length} dabs directly to tiles',
-      tag: 'TiledSurface',
-    );
     profiler?.noteTileFlushStart();
 
     // Group dabs by affected tiles for batch processing
@@ -83,26 +86,32 @@ class TiledSurface {
     // Rasterize affected tiles in parallel
     final futures = <Future<void>>[];
     tileDabs.forEach((key, dabList) {
-      debugLog(
-        'Rasterizing tile (${key.x}, ${key.y}) with ${dabList.length} dabs',
-        tag: 'TiledSurface',
+      // Reduce per-tile logging (too verbose)
+      // debugLog(
+      //   'Rasterizing tile (${key.x}, ${key.y}) with ${dabList.length} dabs',
+      //   tag: 'TiledSurface',
+      // );
+      futures.add(
+        _rasterizeTile(key, dabList, maxSizePx, spacing, runtimeSizeScale),
       );
-      futures.add(_rasterizeTile(key, dabList));
     });
 
     await Future.wait(futures);
-    debugLog(
-      'Baking complete, now have ${_tiles.length} total tiles',
-      tag: 'TiledSurface',
-    );
     profiler?.noteTileFlushEnd();
   }
 
-  Future<void> _rasterizeTile(_TileKey key, List<_PendingDab> dabs) async {
-    debugLog(
-      'Rasterizing tile (${key.x}, ${key.y}) with ${dabs.length} dabs',
-      tag: 'TiledSurface',
-    );
+  Future<void> _rasterizeTile(
+    _TileKey key,
+    List<_PendingDab> dabs,
+    double? maxSizePx,
+    double? spacing,
+    double? runtimeSizeScale,
+  ) async {
+    // Reduce individual tile rasterization logging (too verbose)
+    // debugLog(
+    //   'Rasterizing tile (${key.x}, ${key.y}) with ${dabs.length} dabs',
+    //   tag: 'TiledSurface',
+    // );
     final start = DateTime.now().microsecondsSinceEpoch;
     final ts = tileSize.toDouble();
     final recorder = ui.PictureRecorder();
@@ -110,26 +119,40 @@ class TiledSurface {
     final canvas = ui.Canvas(recorder, rect);
     final existing = _tiles[key];
     if (existing != null) {
-      debugLog('Building on existing tile', tag: 'TiledSurface');
+      // debugLog('Building on existing tile', tag: 'TiledSurface'); // Too verbose
       canvas.drawImage(existing, ui.Offset.zero, ui.Paint());
     }
     for (final d in dabs) {
       // Convert to tile local coordinates
       final local = d.center - d.tileOrigin;
-      debugLog(
-        'Drawing dab at tile-local ${local}, radius=${d.radius.toStringAsFixed(1)}',
-        tag: 'TiledSurface',
-      );
+      // Calculate dynamic logging rate based on brush parameters if available
+      int logRate = 100000; // Default rate
+      if (maxSizePx != null && spacing != null && runtimeSizeScale != null) {
+        final effectiveSize = maxSizePx * runtimeSizeScale;
+        final dabsPerPixel = 1.0 / spacing;
+        final expectedDabRate = dabsPerPixel / effectiveSize;
+        logRate = (101 * expectedDabRate).clamp(50, 1000000).round();
+      }
+
+      // Smart rate-limited logging based on brush characteristics
+      if (_dabLogCount % logRate == 0) {
+        debugLog(
+          'Drawing dab at tile-local $local, radius=${d.radius.toStringAsFixed(1)} [logRate=$logRate]',
+          tag: 'TiledSurface',
+        );
+      }
+      _dabLogCount++;
       // Render a radial alpha mask using a hard core up to coreRatio, then linear fade to edge
       drawFeatheredDab(canvas, local, d.radius, d.color, d.coreRatio);
     }
     final pic = recorder.endRecording();
     final img = await pic.toImage(tileSize, tileSize);
     existing?.dispose();
-    debugLog(
-      'Tile (${key.x}, ${key.y}) rasterized successfully',
-      tag: 'TiledSurface',
-    );
+    // Per-tile completion logging is too verbose
+    // debugLog(
+    //   'Tile (${key.x}, ${key.y}) rasterized successfully',
+    //   tag: 'TiledSurface',
+    // );
     _tiles[key] = img;
     final end = DateTime.now().microsecondsSinceEpoch;
     profiler?.noteTileRasterized((end - start) / 1000.0);
@@ -137,13 +160,15 @@ class TiledSurface {
 
   /// Draw all tiles by simple blit. Assumes caller sets up transform for viewport.
   void draw(ui.Canvas canvas) {
-    debugLog('Drawing ${_tiles.length} tiles', tag: 'TiledSurface');
+    // Per-frame tile drawing logging is too verbose
+    // debugLog('Drawing ${_tiles.length} tiles', tag: 'TiledSurface');
     final paint = ui.Paint()..filterQuality = ui.FilterQuality.none;
     _tiles.forEach((key, img) {
-      debugLog(
-        'Drawing tile (${key.x}, ${key.y}) at offset (${key.x * tileSize.toDouble()}, ${key.y * tileSize.toDouble()})',
-        tag: 'TiledSurface',
-      );
+      // Per-tile drawing logging is too verbose
+      // debugLog(
+      //   'Drawing tile (${key.x}, ${key.y}) at offset (${key.x * tileSize.toDouble()}, ${key.y * tileSize.toDouble()})',
+      //   tag: 'TiledSurface',
+      // );
       canvas.drawImage(
         img,
         ui.Offset(key.x * tileSize.toDouble(), key.y * tileSize.toDouble()),
