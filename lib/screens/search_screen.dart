@@ -38,6 +38,7 @@ class _SearchScreenState extends State<SearchScreen>
   late final AnimationController _overlayController;
   final GlobalKey _headerKey = GlobalKey();
   double _headerFullHeight = 0;
+  final GlobalKey _collapsedKey = GlobalKey();
 
   @override
   void initState() {
@@ -74,19 +75,23 @@ class _SearchScreenState extends State<SearchScreen>
   @override
   Widget build(BuildContext context) {
     final search = context.watch<ReferenceSearchService>();
-    // Post-frame: measure the full height of the expanded header content.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _updateHeaderHeight());
+    // Post-frame: measure heights used for anchoring/padding.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateHeights());
 
-    // Anchor mode: while the header is at all visible and not manually overlaid,
-    // keep the grid pushed down by the visible header height so their edges
-    // stay glued. Once fully collapsed (or when manually expanded mid-page),
-    // switch to overlay (no extra grid padding).
-    final bool anchorHeader = !_manualOverlay && _expansion > 0.001;
-    // Visible height of the header used to visually shift the grid without
-    // altering its scroll geometry, avoiding snaps.
-    final double headerVisibleHeight = anchorHeader
-        ? _headerFullHeight * _expansion.clamp(0.0, 1.0)
+    // Compute dynamic padding to keep the grid glued to the top UI while
+    // collapsing. After collapse, keep it glued to the collapsed bar until
+    // you've scrolled past its height, then switch to overlay.
+    final double offset = _scrollController.hasClients
+        ? _scrollController.offset
         : 0.0;
+    final double h = _headerFullHeight > 0 ? _headerFullHeight : 160.0;
+    double padCore = h - offset;
+
+    // desiredTop is how far below the top UI the first grid row should be.
+    final double desiredTop = padCore;
+    // Keep the seam glued: firstItemTop = topPadding - scrollOffset = desiredTop
+    // => topPadding = desiredTop + scrollOffset (+ base spacing).
+    final double gridTopPadding = 8.0 + offset + desiredTop;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Reference Search'),
@@ -123,35 +128,32 @@ class _SearchScreenState extends State<SearchScreen>
         children: [
           // Content grid behind the overlaying controls
           Positioned.fill(
-            child: Transform.translate(
-              offset: Offset(0, headerVisibleHeight),
-              child: GridView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(8),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                ),
-                itemCount: search.results.length,
-                itemBuilder: (context, i) {
-                  final r = search.results[i];
-                  final selected = _selectedIds.contains(r.id);
-                  return _ResultTile(
-                    result: r,
-                    selected: selected,
-                    onToggle: () {
-                      setState(() {
-                        if (selected) {
-                          _selectedIds.remove(r.id);
-                        } else {
-                          _selectedIds.add(r.id);
-                        }
-                      });
-                    },
-                  );
-                },
+            child: GridView.builder(
+              controller: _scrollController,
+              padding: EdgeInsets.fromLTRB(8, gridTopPadding, 8, 8),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
               ),
+              itemCount: search.results.length,
+              itemBuilder: (context, i) {
+                final r = search.results[i];
+                final selected = _selectedIds.contains(r.id);
+                return _ResultTile(
+                  result: r,
+                  selected: selected,
+                  onToggle: () {
+                    setState(() {
+                      if (selected) {
+                        _selectedIds.remove(r.id);
+                      } else {
+                        _selectedIds.add(r.id);
+                      }
+                    });
+                  },
+                );
+              },
             ),
           ),
 
@@ -160,17 +162,20 @@ class _SearchScreenState extends State<SearchScreen>
             top: 0,
             left: 0,
             right: 0,
-            child: _CollapsedControlsBar(
-              count: _count,
-              seconds: _seconds,
-              unlimited: _unlimited,
-              onStart: search.results.isEmpty
-                  ? null
-                  : () => _startSession(search),
-              onExpand: () {
-                _manualOverlay = true;
-                _overlayController.animateTo(1.0, curve: Curves.easeOutCubic);
-              },
+            child: KeyedSubtree(
+              key: _collapsedKey,
+              child: _CollapsedControlsBar(
+                count: _count,
+                seconds: _seconds,
+                unlimited: _unlimited,
+                onStart: search.results.isEmpty
+                    ? null
+                    : () => _startSession(search),
+                onExpand: () {
+                  _manualOverlay = true;
+                  _overlayController.animateTo(1.0, curve: Curves.easeOutCubic);
+                },
+              ),
             ),
           ),
 
@@ -220,7 +225,7 @@ class _SearchScreenState extends State<SearchScreen>
     }
   }
 
-  void _updateHeaderHeight() {
+  void _updateHeights() {
     final ctx = _headerKey.currentContext;
     if (ctx == null) return;
     final size = ctx.size;
@@ -230,7 +235,7 @@ class _SearchScreenState extends State<SearchScreen>
     // collapsing measurements feeding back into collapseRange.
     final bool shouldUpdateFull = _headerFullHeight == 0 || _expansion > 0.99;
     if (shouldUpdateFull && (h - _headerFullHeight).abs() > 1.0) {
-      if (mounted) setState(() => _headerFullHeight = h);
+      if (mounted) _headerFullHeight = h;
     }
   }
 
@@ -561,15 +566,7 @@ class _SearchBar extends StatelessWidget {
   }
 }
 
-class _ErrorBanner extends StatelessWidget {
-  final String message;
-  const _ErrorBanner({required this.message});
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(8),
-    child: Text(message, style: const TextStyle(color: Colors.redAccent)),
-  );
-}
+// (Removed unused _ErrorBanner)
 
 class _ResultTile extends StatelessWidget {
   final ReferenceResult result;
