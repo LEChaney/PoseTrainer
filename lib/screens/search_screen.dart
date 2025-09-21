@@ -137,7 +137,11 @@ class _SearchScreenState extends State<SearchScreen>
               child: GridView.builder(
                 controller: _scrollController,
                 padding: EdgeInsets.fromLTRB(8, gridTopPadding, 8, 8),
-                cacheExtent: MediaQuery.of(context).size.height,
+                // Lower prefetch distance to reduce decode spikes on iPhone.
+                cacheExtent: MediaQuery.of(context).size.height * 0.6,
+                addAutomaticKeepAlives: false,
+                addSemanticIndexes: false,
+                addRepaintBoundaries: true,
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 3,
                   mainAxisSpacing: 8,
@@ -605,6 +609,11 @@ class _ResultTile extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    // Derive tile width from known grid layout: 3 columns, padding 8, spacing 8.
+    final tileLogical = ((size.width - 8 * 2 - 8 * 2) / 3).clamp(48.0, 400.0);
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final targetPx = (tileLogical * dpr).clamp(64, 1024).round();
     return GestureDetector(
       onTap: onToggle,
       child: ClipRRect(
@@ -617,31 +626,22 @@ class _ResultTile extends StatelessWidget {
             // Letterboxed areas show a neutral dark background.
             ColoredBox(
               color: const Color(0xFF202024),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final dpr = MediaQuery.of(context).devicePixelRatio;
-                  final logical = constraints.maxWidth.isFinite
-                      ? constraints.maxWidth
-                      : 128.0;
-                  final targetPx = (logical * dpr).clamp(64, 2048).round();
-                  return Image.network(
-                    result.previewUrl,
-                    fit: BoxFit.contain,
-                    filterQuality: FilterQuality.low,
-                    cacheWidth: targetPx,
-                    webHtmlElementStrategy: kIsWeb
-                        ? WebHtmlElementStrategy.fallback
-                        : WebHtmlElementStrategy.never,
-                    errorBuilder: (ctx, err, st) => const ColoredBox(
-                      color: Colors.black26,
-                      child: Icon(
-                        Icons.broken_image,
-                        size: 20,
-                        color: Colors.white54,
-                      ),
-                    ),
-                  );
-                },
+              child: Image.network(
+                result.previewUrl,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.low,
+                cacheWidth: targetPx,
+                webHtmlElementStrategy: kIsWeb
+                    ? WebHtmlElementStrategy.fallback
+                    : WebHtmlElementStrategy.never,
+                errorBuilder: (ctx, err, st) => const ColoredBox(
+                  color: Colors.black26,
+                  child: Icon(
+                    Icons.broken_image,
+                    size: 20,
+                    color: Colors.white54,
+                  ),
+                ),
               ),
             ),
             Positioned(
