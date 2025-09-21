@@ -137,6 +137,7 @@ class _SearchScreenState extends State<SearchScreen>
               child: GridView.builder(
                 controller: _scrollController,
                 padding: EdgeInsets.fromLTRB(8, gridTopPadding, 8, 8),
+                physics: const ClampingScrollPhysics(),
                 // Lower prefetch distance to reduce decode spikes on iPhone.
                 cacheExtent: MediaQuery.of(context).size.height * 0.6,
                 addAutomaticKeepAlives: false,
@@ -152,6 +153,7 @@ class _SearchScreenState extends State<SearchScreen>
                   final r = search.results[i];
                   final selected = _selectedIds.contains(r.id);
                   return _ResultTile(
+                    key: ValueKey(r.id),
                     result: r,
                     selected: selected,
                     onToggle: () {
@@ -599,14 +601,15 @@ class _SearchBar extends StatelessWidget {
 // (Removed unused _ErrorBanner)
 
 class _ResultTile extends StatelessWidget {
-  final ReferenceResult result;
-  final bool selected;
-  final VoidCallback onToggle;
   const _ResultTile({
+    super.key,
     required this.result,
     required this.selected,
     required this.onToggle,
   });
+  final ReferenceResult result;
+  final bool selected;
+  final VoidCallback onToggle;
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -616,69 +619,69 @@ class _ResultTile extends StatelessWidget {
     final targetPx = (tileLogical * dpr).clamp(64, 1024).round();
     return GestureDetector(
       onTap: onToggle,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Use contain to preserve the image's intrinsic aspect ratio and
-            // avoid the horizontal stretching/cropping seen with cover.
-            // Letterboxed areas show a neutral dark background.
-            ColoredBox(
-              color: const Color(0xFF202024),
-              child: Image.network(
-                result.previewUrl,
-                fit: BoxFit.contain,
-                filterQuality: FilterQuality.low,
-                cacheWidth: targetPx,
-                webHtmlElementStrategy: kIsWeb
-                    ? WebHtmlElementStrategy.fallback
-                    : WebHtmlElementStrategy.never,
-                errorBuilder: (ctx, err, st) => const ColoredBox(
-                  color: Colors.black26,
-                  child: Icon(
-                    Icons.broken_image,
-                    size: 20,
-                    color: Colors.white54,
-                  ),
+      child: Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.none,
+        children: [
+          // Use contain to preserve the image's intrinsic aspect ratio and
+          // avoid the horizontal stretching/cropping seen with cover.
+          // Letterboxed areas show a neutral dark background.
+          ColoredBox(
+            color: const Color(0xFF202024),
+            child: Image.network(
+              result.previewUrl,
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.low,
+              cacheWidth: targetPx,
+              excludeFromSemantics: true,
+              // Prefer CanvasKit draw path, fall back to HTML element on CORS errors.
+              webHtmlElementStrategy: kIsWeb
+                  ? WebHtmlElementStrategy.fallback
+                  : WebHtmlElementStrategy.never,
+              errorBuilder: (ctx, err, st) => const ColoredBox(
+                color: Colors.black26,
+                child: Icon(
+                  Icons.broken_image,
+                  size: 20,
+                  color: Colors.white54,
                 ),
               ),
             ),
-            Positioned(
-              right: 4,
-              bottom: 4,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '${result.score}',
-                  style: const TextStyle(color: Colors.white, fontSize: 11),
-                ),
+          ),
+          Positioned(
+            right: 4,
+            bottom: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '${result.score}',
+                style: const TextStyle(color: Colors.white, fontSize: 11),
               ),
             ),
-            if (selected)
-              Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.lightBlueAccent, width: 3),
-                  borderRadius: BorderRadius.circular(8),
-                  color: Colors.lightBlueAccent.withValues(alpha: 0.15),
-                ),
+          ),
+          if (selected)
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.lightBlueAccent, width: 3),
+                borderRadius: BorderRadius.circular(8),
+                color: Colors.lightBlueAccent.withValues(alpha: 0.15),
               ),
-            if (selected)
-              const Positioned(
-                top: 6,
-                left: 6,
-                child: CircleAvatar(
-                  radius: 12,
-                  backgroundColor: Colors.lightBlue,
-                  child: Icon(Icons.check, size: 16, color: Colors.white),
-                ),
+            ),
+          if (selected)
+            const Positioned(
+              top: 6,
+              left: 6,
+              child: CircleAvatar(
+                radius: 12,
+                backgroundColor: Colors.lightBlue,
+                child: Icon(Icons.check, size: 16, color: Colors.white),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
