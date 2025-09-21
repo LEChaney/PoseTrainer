@@ -32,27 +32,29 @@ class _SearchScreenState extends State<SearchScreen>
   bool _unlimited = false;
   final _secondsController = TextEditingController(text: '60');
   final Set<String> _selectedIds = <String>{};
-  double _expansion = 1.0; // 1=fully expanded, 0=collapsed
   bool _manualOverlay = false;
   final ScrollController _scrollController = ScrollController();
   late final AnimationController _overlayController;
   final GlobalKey _headerKey = GlobalKey();
   double _headerFullHeight = 0;
   final GlobalKey _collapsedKey = GlobalKey();
+  bool _measurePending = false;
 
   @override
   void initState() {
     super.initState();
     infoLog('SearchScreen initialized', tag: 'SearchScreen');
-    _overlayController =
-        AnimationController(
-          vsync: this,
-          duration: const Duration(milliseconds: 220),
-          value: _expansion,
-        )..addListener(() {
-          // Drive UI from controller for smooth tap-to-expand animation.
-          if (mounted) setState(() => _expansion = _overlayController.value);
-        });
+    _overlayController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+      value: 1.0,
+    );
+    // When fully expanded again, re-measure once in case layout changed.
+    _overlayController.addListener(() {
+      if (_overlayController.value > 0.99) {
+        _scheduleMeasure();
+      }
+    });
     _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       infoLog(
@@ -60,6 +62,7 @@ class _SearchScreenState extends State<SearchScreen>
         tag: 'SearchScreen',
       );
       context.read<ReferenceSearchService>().search(_controller.text);
+      _scheduleMeasure();
     });
   }
 
@@ -75,8 +78,10 @@ class _SearchScreenState extends State<SearchScreen>
   @override
   Widget build(BuildContext context) {
     final search = context.watch<ReferenceSearchService>();
-    // Post-frame: measure heights used for anchoring/padding.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _updateHeights());
+    // Schedule a measure if needed (debounced to once per frame).
+    if (_measurePending == false && _headerFullHeight == 0) {
+      _scheduleMeasure();
+    }
 
     // Compute dynamic padding to keep the grid glued to the top UI while
     // collapsing. After collapse, keep it glued to the collapsed bar until
@@ -128,32 +133,35 @@ class _SearchScreenState extends State<SearchScreen>
         children: [
           // Content grid behind the overlaying controls
           Positioned.fill(
-            child: GridView.builder(
-              controller: _scrollController,
-              padding: EdgeInsets.fromLTRB(8, gridTopPadding, 8, 8),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
+            child: RepaintBoundary(
+              child: GridView.builder(
+                controller: _scrollController,
+                padding: EdgeInsets.fromLTRB(8, gridTopPadding, 8, 8),
+                cacheExtent: MediaQuery.of(context).size.height,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                ),
+                itemCount: search.results.length,
+                itemBuilder: (context, i) {
+                  final r = search.results[i];
+                  final selected = _selectedIds.contains(r.id);
+                  return _ResultTile(
+                    result: r,
+                    selected: selected,
+                    onToggle: () {
+                      setState(() {
+                        if (selected) {
+                          _selectedIds.remove(r.id);
+                        } else {
+                          _selectedIds.add(r.id);
+                        }
+                      });
+                    },
+                  );
+                },
               ),
-              itemCount: search.results.length,
-              itemBuilder: (context, i) {
-                final r = search.results[i];
-                final selected = _selectedIds.contains(r.id);
-                return _ResultTile(
-                  result: r,
-                  selected: selected,
-                  onToggle: () {
-                    setState(() {
-                      if (selected) {
-                        _selectedIds.remove(r.id);
-                      } else {
-                        _selectedIds.add(r.id);
-                      }
-                    });
-                  },
-                );
-              },
             ),
           ),
 
@@ -179,25 +187,33 @@ class _SearchScreenState extends State<SearchScreen>
             ),
           ),
 
-          // Expanding header overlay (clips height by _expansion)
+          // Expanding header overlay (clips height via controller value)
           Positioned(
             top: 0,
             left: 0,
             right: 0,
-            child: IgnorePointer(
-              ignoring: _expansion <= 0.001,
-              child: ClipRect(
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  heightFactor: _expansion.clamp(0.0, 1.0),
-                  child: Material(
-                    key: _headerKey,
-                    elevation: 3,
-                    color: Theme.of(context).colorScheme.surface,
-                    child: _buildExpandedHeader(search),
+            child: AnimatedBuilder(
+              animation: _overlayController,
+              builder: (context, _) {
+                final v = _overlayController.value.clamp(0.0, 1.0);
+                return RepaintBoundary(
+                  child: IgnorePointer(
+                    ignoring: v <= 0.001,
+                    child: ClipRect(
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        heightFactor: v,
+                        child: Material(
+                          key: _headerKey,
+                          elevation: 3,
+                          color: Theme.of(context).colorScheme.surface,
+                          child: _buildExpandedHeader(search),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
         ],
@@ -233,10 +249,20 @@ class _SearchScreenState extends State<SearchScreen>
     final h = size.height;
     // Only capture the "full" height when header is fully expanded to avoid
     // collapsing measurements feeding back into collapseRange.
-    final bool shouldUpdateFull = _headerFullHeight == 0 || _expansion > 0.99;
+    final bool shouldUpdateFull =
+        _headerFullHeight == 0 || _overlayController.value > 0.99;
     if (shouldUpdateFull && (h - _headerFullHeight).abs() > 1.0) {
-      if (mounted) _headerFullHeight = h;
+      if (mounted) setState(() => _headerFullHeight = h);
     }
+  }
+
+  void _scheduleMeasure() {
+    if (_measurePending) return;
+    _measurePending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measurePending = false;
+      _updateHeights();
+    });
   }
 
   void _startSession(ReferenceSearchService search) {
@@ -591,20 +617,31 @@ class _ResultTile extends StatelessWidget {
             // Letterboxed areas show a neutral dark background.
             ColoredBox(
               color: const Color(0xFF202024),
-              child: Image.network(
-                result.previewUrl,
-                fit: BoxFit.contain,
-                webHtmlElementStrategy: kIsWeb
-                    ? WebHtmlElementStrategy.fallback
-                    : WebHtmlElementStrategy.never,
-                errorBuilder: (ctx, err, st) => const ColoredBox(
-                  color: Colors.black26,
-                  child: Icon(
-                    Icons.broken_image,
-                    size: 20,
-                    color: Colors.white54,
-                  ),
-                ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final dpr = MediaQuery.of(context).devicePixelRatio;
+                  final logical = constraints.maxWidth.isFinite
+                      ? constraints.maxWidth
+                      : 128.0;
+                  final targetPx = (logical * dpr).clamp(64, 2048).round();
+                  return Image.network(
+                    result.previewUrl,
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.low,
+                    cacheWidth: targetPx,
+                    webHtmlElementStrategy: kIsWeb
+                        ? WebHtmlElementStrategy.fallback
+                        : WebHtmlElementStrategy.never,
+                    errorBuilder: (ctx, err, st) => const ColoredBox(
+                      color: Colors.black26,
+                      child: Icon(
+                        Icons.broken_image,
+                        size: 20,
+                        color: Colors.white54,
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
             Positioned(
