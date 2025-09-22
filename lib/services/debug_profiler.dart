@@ -455,6 +455,18 @@ class DebugProfiler {
     return m;
   }
 
+  double _percentileD(List<double> v, double p) {
+    if (v.isEmpty) return 0.0;
+    final sorted = List<double>.from(v)..sort();
+    if (sorted.length == 1) return sorted.first;
+    final idx = (p.clamp(0.0, 1.0) * (sorted.length - 1));
+    final lo = idx.floor();
+    final hi = idx.ceil();
+    if (lo == hi) return sorted[lo];
+    final t = idx - lo;
+    return sorted[lo] * (1 - t) + sorted[hi] * t;
+  }
+
   // Labeled subtree paint metrics -------------------------------------------
   void noteSubtreePaint(String label, double durationMs) {
     if (durationMs.isNaN || durationMs.isInfinite) return;
@@ -475,14 +487,17 @@ class DebugProfiler {
   double get frameAvgTotalMs => _avgD(_frameTotalMs);
   double get frameMinTotalMs => _minD(_frameTotalMs);
   double get frameMaxTotalMs => _maxD(_frameTotalMs);
+  double get frameP95TotalMs => _percentileD(_frameTotalMs, 0.95);
 
   double get frameAvgBuildMs => _avgD(_frameBuildMs);
   double get frameMinBuildMs => _minD(_frameBuildMs);
   double get frameMaxBuildMs => _maxD(_frameBuildMs);
+  double get frameP95BuildMs => _percentileD(_frameBuildMs, 0.95);
 
   double get frameAvgRasterMs => _avgD(_frameRasterMs);
   double get frameMinRasterMs => _minD(_frameRasterMs);
   double get frameMaxRasterMs => _maxD(_frameRasterMs);
+  double get frameP95RasterMs => _percentileD(_frameRasterMs, 0.95);
 
   double get perFrameAvgSearchBuildMs => _avgD(_perFrameSearchBuildMs);
   double get perFrameMinSearchBuildMs => _minD(_perFrameSearchBuildMs);

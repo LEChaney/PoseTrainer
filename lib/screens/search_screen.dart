@@ -270,6 +270,7 @@ class _SearchScreenState extends State<SearchScreen>
             if (_showProfilerHud)
               Positioned(
                 left: 8,
+                right: 8,
                 bottom: 8,
                 child: _SearchProfilerHud(
                   profiler: _profiler,
@@ -826,143 +827,158 @@ class _SearchProfilerHudState extends State<_SearchProfilerHud> {
       'Search.HeaderOverlay',
     );
     return RepaintBoundary(
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 520),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final double maxW = constraints.maxWidth;
+          // Target chip width and responsive columns
+          const double targetChipW = 220;
+          const double minChipW = 180;
+          const double hPad = 12 * 2; // container horizontal padding
+          const double gap = 8; // Wrap spacing
+          final double innerW = maxW - hPad;
+          // Choose the maximum number of columns whose per-column width >= minChipW
+          int cols = 1;
+          for (int c = 4; c >= 1; c--) {
+            final w = (innerW - gap * (c - 1)) / c;
+            if (w >= minChipW) {
+              cols = c;
+              break;
+            }
+          }
+          double chipW = ((innerW - gap * (cols - 1)) / cols).clamp(
+            minChipW,
+            targetChipW,
+          );
+          // Label width proportional to chip width (keeps alignment)
+          final double labelW = (chipW * 0.38).clamp(70, 100);
+
+          Widget chip(String label, String value) =>
+              _chip(label, value, textStyle, width: chipW, labelWidth: labelW);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.speed, size: 16, color: Colors.white70),
-                const SizedBox(width: 8),
-                Text(
-                  'Search Profiler',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: Colors.white,
-                  ),
+                Row(
+                  children: [
+                    const Icon(Icons.speed, size: 16, color: Colors.white70),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Search Profiler',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        color: Colors.white,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                      onPressed: widget.onClose,
+                    ),
+                  ],
                 ),
-                const Spacer(),
-                IconButton(
-                  tooltip: 'Close',
-                  icon: const Icon(Icons.close, color: Colors.white70),
-                  onPressed: widget.onClose,
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: gap,
+                  runSpacing: 0,
+                  children: [
+                    chip(
+                      'Frame',
+                      '${widget.profiler.frameAvgTotalMs.toStringAsFixed(1)} avg · p95 ${widget.profiler.frameP95TotalMs.toStringAsFixed(0)} · max ${widget.profiler.frameMaxTotalMs.toStringAsFixed(0)}',
+                    ),
+                    chip(
+                      'Build',
+                      '${widget.profiler.frameAvgBuildMs.toStringAsFixed(1)} avg · p95 ${widget.profiler.frameP95BuildMs.toStringAsFixed(0)} · max ${widget.profiler.frameMaxBuildMs.toStringAsFixed(0)}',
+                    ),
+                    chip(
+                      'Raster',
+                      '${widget.profiler.frameAvgRasterMs.toStringAsFixed(1)} avg · p95 ${widget.profiler.frameP95RasterMs.toStringAsFixed(0)} · max ${widget.profiler.frameMaxRasterMs.toStringAsFixed(0)}',
+                    ),
+                    chip(
+                      'Builds',
+                      '${widget.profiler.searchBuildsPerSec.toStringAsFixed(1)}/s',
+                    ),
+                    chip(
+                      'Items',
+                      '${widget.profiler.gridItemsBuiltPerSec.toStringAsFixed(1)}/s',
+                    ),
+                    chip(
+                      'Images',
+                      '${widget.profiler.imageWidgetsPerSec.toStringAsFixed(1)}/s',
+                    ),
+                    chip('S.build/f', () {
+                      final avg = widget.profiler.perFrameAvgSearchBuildMs;
+                      final buildAvg = widget.profiler.frameAvgBuildMs;
+                      final pct = buildAvg <= 0 ? 0 : (avg / buildAvg * 100.0);
+                      return '${avg.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinSearchBuildMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxSearchBuildMs.toStringAsFixed(0)} (${pct.toStringAsFixed(0)}%)';
+                    }()),
+                    chip('G.item/f', () {
+                      final avg = widget.profiler.perFrameAvgGridItemBuildMs;
+                      final buildAvg = widget.profiler.frameAvgBuildMs;
+                      final pct = buildAvg <= 0 ? 0 : (avg / buildAvg * 100.0);
+                      return '${avg.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinGridItemBuildMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxGridItemBuildMs.toStringAsFixed(0)} (${pct.toStringAsFixed(0)}%)';
+                    }()),
+                    chip(
+                      'Img/frame',
+                      '${widget.profiler.perFrameAvgImageWidgetMs.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinImageWidgetMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxImageWidgetMs.toStringAsFixed(0)}',
+                    ),
+                    if (hasHeaderPaint)
+                      chip(
+                        'Hdr paint',
+                        '${widget.profiler.subtreeAvgMs('Search.HeaderOverlay').toStringAsFixed(1)}ms · ${widget.profiler.subtreeMinMs('Search.HeaderOverlay').toStringAsFixed(0)}–${widget.profiler.subtreeMaxMs('Search.HeaderOverlay').toStringAsFixed(0)}',
+                      ),
+                    if (hasGridPaint)
+                      chip(
+                        'Grid paint',
+                        '${widget.profiler.subtreeAvgMs('Search.GridView').toStringAsFixed(1)}ms · ${widget.profiler.subtreeMinMs('Search.GridView').toStringAsFixed(0)}–${widget.profiler.subtreeMaxMs('Search.GridView').toStringAsFixed(0)}',
+                      ),
+                    if (hasGridPaint)
+                      chip(
+                        'Img paint',
+                        '${widget.profiler.subtreeAvgMs('GridView.Image').toStringAsFixed(1)}ms · ${widget.profiler.subtreeMinMs('GridView.Image').toStringAsFixed(0)}–${widget.profiler.subtreeMaxMs('GridView.Image').toStringAsFixed(0)}',
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Switch.adaptive(
+                      value: widget.disableImages,
+                      onChanged: widget.onToggleImages,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Disable images (Image.network)',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 8,
-              runSpacing: 0,
-              children: [
-                _chip(
-                  'Frame',
-                  '${widget.profiler.frameAvgTotalMs.toStringAsFixed(1)}ms avg · ${widget.profiler.frameMinTotalMs.toStringAsFixed(0)}–${widget.profiler.frameMaxTotalMs.toStringAsFixed(0)}',
-                  textStyle,
-                ),
-                _chip(
-                  'Build',
-                  '${widget.profiler.frameAvgBuildMs.toStringAsFixed(1)}ms avg · ${widget.profiler.frameMinBuildMs.toStringAsFixed(0)}–${widget.profiler.frameMaxBuildMs.toStringAsFixed(0)}',
-                  textStyle,
-                ),
-                _chip(
-                  'Raster',
-                  '${widget.profiler.frameAvgRasterMs.toStringAsFixed(1)}ms avg · ${widget.profiler.frameMinRasterMs.toStringAsFixed(0)}–${widget.profiler.frameMaxRasterMs.toStringAsFixed(0)}',
-                  textStyle,
-                ),
-                _chip(
-                  'Builds',
-                  '${widget.profiler.searchBuildsPerSec.toStringAsFixed(1)}/s',
-                  textStyle,
-                ),
-                _chip(
-                  'Items',
-                  '${widget.profiler.gridItemsBuiltPerSec.toStringAsFixed(1)}/s',
-                  textStyle,
-                ),
-                _chip(
-                  'Images',
-                  '${widget.profiler.imageWidgetsPerSec.toStringAsFixed(1)}/s',
-                  textStyle,
-                ),
-                _chip('S.build/f', () {
-                  final avg = widget.profiler.perFrameAvgSearchBuildMs;
-                  final buildAvg = widget.profiler.frameAvgBuildMs;
-                  final pct = buildAvg <= 0 ? 0 : (avg / buildAvg * 100.0);
-                  return '${avg.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinSearchBuildMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxSearchBuildMs.toStringAsFixed(0)} (${pct.toStringAsFixed(0)}%)';
-                }(), textStyle),
-                _chip('G.item/f', () {
-                  final avg = widget.profiler.perFrameAvgGridItemBuildMs;
-                  final buildAvg = widget.profiler.frameAvgBuildMs;
-                  final pct = buildAvg <= 0 ? 0 : (avg / buildAvg * 100.0);
-                  return '${avg.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinGridItemBuildMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxGridItemBuildMs.toStringAsFixed(0)} (${pct.toStringAsFixed(0)}%)';
-                }(), textStyle),
-                _chip(
-                  'Img/frame',
-                  '${widget.profiler.perFrameAvgImageWidgetMs.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinImageWidgetMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxImageWidgetMs.toStringAsFixed(0)}',
-                  textStyle,
-                ),
-                if (hasHeaderPaint)
-                  _chip(
-                    'Hdr paint',
-                    '${widget.profiler.subtreeAvgMs('Search.HeaderOverlay').toStringAsFixed(1)}ms · ${widget.profiler.subtreeMinMs('Search.HeaderOverlay').toStringAsFixed(0)}–${widget.profiler.subtreeMaxMs('Search.HeaderOverlay').toStringAsFixed(0)}',
-                    textStyle,
-                  ),
-                if (hasGridPaint)
-                  _chip(
-                    'Grid paint',
-                    '${widget.profiler.subtreeAvgMs('Search.GridView').toStringAsFixed(1)}ms · ${widget.profiler.subtreeMinMs('Search.GridView').toStringAsFixed(0)}–${widget.profiler.subtreeMaxMs('Search.GridView').toStringAsFixed(0)}',
-                    textStyle,
-                  ),
-                if (hasGridPaint)
-                  _chip(
-                    'Img paint',
-                    '${widget.profiler.subtreeAvgMs('GridView.Image').toStringAsFixed(1)}ms · ${widget.profiler.subtreeMinMs('GridView.Image').toStringAsFixed(0)}–${widget.profiler.subtreeMaxMs('GridView.Image').toStringAsFixed(0)}',
-                    textStyle,
-                  ),
-                _chip(
-                  'Scroll',
-                  '${widget.profiler.searchScrollTicksPerSec.toStringAsFixed(1)}/s',
-                  textStyle,
-                ),
-                _chip(
-                  'Vel',
-                  '${widget.profiler.lastScrollVelocityPxPerSec.toStringAsFixed(0)} px/s',
-                  textStyle,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Switch.adaptive(
-                  value: widget.disableImages,
-                  onChanged: widget.onToggleImages,
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  'Disable images (Image.network)',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ],
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 
-  Widget _chip(String label, String value, TextStyle? textStyle) {
+  Widget _chip(
+    String label,
+    String value,
+    TextStyle? textStyle, {
+    double width = 220,
+    double labelWidth = 84,
+  }) {
     // Use fixed widths for label and value to avoid relayout when numbers change.
     final labelStyle = textStyle?.copyWith(fontWeight: FontWeight.w400);
     final valueStyle = textStyle?.copyWith(fontWeight: FontWeight.w700);
     return SizedBox(
-      width: 220,
+      width: width,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(
@@ -973,7 +989,7 @@ class _SearchProfilerHudState extends State<_SearchProfilerHud> {
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 84,
+              width: labelWidth,
               child: Text(
                 label,
                 style: labelStyle,
@@ -988,7 +1004,7 @@ class _SearchProfilerHudState extends State<_SearchProfilerHud> {
                   const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),
                 ),
                 softWrap: true,
-                maxLines: 2,
+                maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
