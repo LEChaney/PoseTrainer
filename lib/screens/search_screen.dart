@@ -46,6 +46,7 @@ class _SearchScreenState extends State<SearchScreen>
   final DebugProfiler _profiler = DebugProfiler();
   bool _showProfilerHud = false;
   bool _disableImages = false; // when true, do not build Image.network
+  bool _debugCorsSafeImages = false; // when true, use CORS-safe debug images
   // HUD ticker moved into the HUD widget to avoid rebuilding the whole screen.
 
   @override
@@ -181,6 +182,7 @@ class _SearchScreenState extends State<SearchScreen>
                         result: r,
                         selected: selected,
                         disableImage: _disableImages,
+                        debugCorsSafeImages: _debugCorsSafeImages,
                         profiler: _profiler,
                         onImageBuilt: (ms) {
                           _profiler.noteSearchImageWidgetCreated();
@@ -275,7 +277,10 @@ class _SearchScreenState extends State<SearchScreen>
                 child: _SearchProfilerHud(
                   profiler: _profiler,
                   disableImages: _disableImages,
+                  debugCorsSafeImages: _debugCorsSafeImages,
                   onToggleImages: (v) => setState(() => _disableImages = v),
+                  onToggleDebugImages: (v) =>
+                      setState(() => _debugCorsSafeImages = v),
                   onClose: _hideProfilerHud,
                 ),
               ),
@@ -683,12 +688,14 @@ class _ResultTile extends StatelessWidget {
     required this.onToggle,
     required this.profiler,
     this.disableImage = false,
+    this.debugCorsSafeImages = false,
     this.onImageBuilt,
   });
   final ReferenceResult result;
   final bool selected;
   final VoidCallback onToggle;
   final bool disableImage;
+  final bool debugCorsSafeImages;
   final DebugProfiler profiler;
   final void Function(double ms)? onImageBuilt;
   @override
@@ -714,17 +721,24 @@ class _ResultTile extends StatelessWidget {
                 : Builder(
                     builder: (context) {
                       final swImg = Stopwatch()..start();
+                      // Choose a CORS-safe debug image source when enabled to avoid
+                      // WebHtmlElementStrategy.fallback (platform views) and keep CanvasKit.
+                      final String url = debugCorsSafeImages
+                          ? 'https://picsum.photos/seed/${Uri.encodeComponent(result.id)}/$targetPx/$targetPx'
+                          : result.previewUrl;
                       final img = PaintProfiler(
                         profiler: profiler,
                         label: "GridView.Image",
                         child: Image.network(
-                          result.previewUrl,
+                          url,
                           fit: BoxFit.contain,
                           filterQuality: FilterQuality.low,
                           cacheWidth: targetPx,
                           excludeFromSemantics: true,
                           webHtmlElementStrategy: kIsWeb
-                              ? WebHtmlElementStrategy.fallback
+                              ? (debugCorsSafeImages
+                                    ? WebHtmlElementStrategy.never
+                                    : WebHtmlElementStrategy.fallback)
                               : WebHtmlElementStrategy.never,
                           errorBuilder: (ctx, err, st) => const ColoredBox(
                             color: Colors.black26,
@@ -787,12 +801,16 @@ class _ResultTile extends StatelessWidget {
 class _SearchProfilerHud extends StatefulWidget {
   final DebugProfiler profiler;
   final bool disableImages;
+  final bool debugCorsSafeImages;
   final ValueChanged<bool> onToggleImages;
+  final ValueChanged<bool> onToggleDebugImages;
   final VoidCallback onClose;
   const _SearchProfilerHud({
     required this.profiler,
     required this.disableImages,
+    required this.debugCorsSafeImages,
     required this.onToggleImages,
+    required this.onToggleDebugImages,
     required this.onClose,
   });
   @override
@@ -946,16 +964,38 @@ class _SearchProfilerHudState extends State<_SearchProfilerHud> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Row(
+                Wrap(
+                  spacing: 16,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Switch.adaptive(
-                      value: widget.disableImages,
-                      onChanged: widget.onToggleImages,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Switch.adaptive(
+                          value: widget.disableImages,
+                          onChanged: widget.onToggleImages,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Disable images',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Disable images (Image.network)',
-                      style: TextStyle(color: Colors.white),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Switch.adaptive(
+                          value: widget.debugCorsSafeImages,
+                          onChanged: widget.onToggleDebugImages,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Debug images (CORS)',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ],
                     ),
                   ],
                 ),
