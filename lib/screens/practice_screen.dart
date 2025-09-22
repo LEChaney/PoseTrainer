@@ -302,7 +302,23 @@ class _PracticeScreenState extends State<PracticeScreen>
     referenceUrl: widget.referenceUrl,
     letterboxReference: true,
     letterboxDrawing: true,
-    overlayTopRight: _BrushSliders(engine: engine),
+    // Provide the rail to the dedicated left slot so it never overlaps the reference
+    leftRail: LayoutBuilder(
+      builder: (context, c) {
+        final isWide = MediaQuery.of(context).size.width >= 900;
+        return isWide
+            ? _BrushControls(engine: engine)
+            : const SizedBox.shrink();
+      },
+    ),
+    drawingOverlay: LayoutBuilder(
+      builder: (context, c) {
+        final isWide = MediaQuery.of(context).size.width >= 900;
+        return isWide
+            ? const SizedBox.shrink()
+            : _BrushControls(engine: engine);
+      },
+    ),
     drawingChild: LayoutBuilder(
       builder: (context, constraints) {
         final dpr = MediaQuery.of(context).devicePixelRatio;
@@ -795,6 +811,472 @@ class _BrushSlidersState extends State<_BrushSliders> {
           divisions: 100,
         ),
       ],
+    );
+  }
+}
+
+/// Adaptive brush controls:
+/// - Phone/narrow: compact pill button at top-right of the drawing area; tap to reveal sliders in a bottom sheet.
+/// - Tablet/wide: vertical rail on the left side of the drawing area with size/flow sliders; hardness tucked behind a menu.
+class _BrushControls extends StatefulWidget {
+  final BrushEngine engine;
+  const _BrushControls({required this.engine});
+  @override
+  State<_BrushControls> createState() => _BrushControlsState();
+}
+
+class _BrushControlsState extends State<_BrushControls> {
+  late double _size;
+  late double _flow;
+  late double _hardness;
+  bool _hardnessOpen = false; // slide-out state on wide screens
+
+  @override
+  void initState() {
+    super.initState();
+    _size = widget.engine.sizeScale;
+    _flow = widget.engine.flowScale;
+    _hardness = widget.engine.hardness;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    final isWide = width >= 900; // tablet-ish
+    return isWide ? _buildLeftRail(context) : _buildEdgeOverlay(context);
+  }
+
+  Widget _buildEdgeOverlay(BuildContext context) {
+    return _EdgeBrushAdjust(
+      size: _size,
+      flow: _flow,
+      onSizeChanged: (v) {
+        setState(() => _size = v.clamp(0.0, 1.0));
+        widget.engine.setSizeScale(_size);
+      },
+      onFlowChanged: (v) {
+        setState(() => _flow = v.clamp(0.0, 1.0));
+        widget.engine.setFlowScale(_flow);
+      },
+    );
+  }
+
+  Widget _buildLeftRail(BuildContext context) {
+    // Compact vertical rail like Procreate: icons with vertical sliders stacked.
+    final railBg = Colors.black54;
+    final rail = Container(
+      color: railBg,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _VerticalSlider(
+            icon: Icons.brush,
+            value: _size,
+            onChanged: (v) {
+              setState(() => _size = v);
+              widget.engine.setSizeScale(v);
+            },
+          ),
+          const SizedBox(height: 8),
+          _VerticalSlider(
+            icon: Icons.opacity,
+            value: _flow,
+            onChanged: (v) {
+              setState(() => _flow = v);
+              widget.engine.setFlowScale(v);
+            },
+          ),
+          const SizedBox(height: 8),
+          // Hardness slide-out: toggled button that reveals a slim vertical slider inline
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(() => _hardnessOpen = !_hardnessOpen),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Icon(Icons.tune, color: Colors.white),
+            ),
+          ),
+          AnimatedCrossFade(
+            crossFadeState: _hardnessOpen
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 150),
+            firstChild: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: _VerticalSlider(
+                icon: Icons.contrast,
+                value: _hardness,
+                onChanged: (v) {
+                  setState(() => _hardness = v);
+                  widget.engine.setHardness(v);
+                },
+              ),
+            ),
+            secondChild: const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+    return SizedBox(width: 48, child: rail);
+  }
+
+  // removed obsolete narrow sheet slider helpers
+}
+
+/// Compact vertical slider with an icon, used in the left rail.
+class _VerticalSlider extends StatefulWidget {
+  final IconData icon;
+  final double value;
+  final ValueChanged<double> onChanged;
+  const _VerticalSlider({
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+  });
+  @override
+  State<_VerticalSlider> createState() => _VerticalSliderState();
+}
+
+class _VerticalSliderState extends State<_VerticalSlider> {
+  bool _dragging = false;
+  double _lastValue = 0;
+  Offset? _lastLocal;
+
+  @override
+  Widget build(BuildContext context) {
+    final bubble = _dragging && _lastLocal != null
+        ? Positioned(
+            right: 2,
+            top: (_lastLocal!.dy - 26).clamp(0.0, 1000.0),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 6,
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                child: Text(
+                  '${(_lastValue * 100).round()}%',
+                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                ),
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
+
+    return SizedBox(
+      height: 220,
+      child: Stack(
+        children: [
+          Column(
+            children: [
+              Icon(widget.icon, color: Colors.white, size: 18),
+              Expanded(
+                child: Listener(
+                  onPointerDown: (e) {
+                    setState(() {
+                      _dragging = true;
+                      _lastLocal = e.localPosition;
+                      _lastValue = widget.value;
+                    });
+                  },
+                  onPointerMove: (e) {
+                    setState(() {
+                      _lastLocal = e.localPosition;
+                      _lastValue = widget.value;
+                    });
+                  },
+                  onPointerUp: (_) {
+                    setState(() {
+                      _dragging = false;
+                      _lastLocal = null;
+                    });
+                  },
+                  child: RotatedBox(
+                    quarterTurns: 3,
+                    child: Slider(
+                      value: widget.value,
+                      min: 0,
+                      max: 1,
+                      onChanged: (v) {
+                        widget.onChanged(v);
+                        if (_dragging) setState(() => _lastValue = v);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          bubble,
+        ],
+      ),
+    );
+  }
+}
+
+// removed obsolete _RailMenu (no longer used)
+
+/// Narrow layout: edge-swipe brush adjust overlay on the left.
+class _EdgeBrushAdjust extends StatefulWidget {
+  final double size;
+  final double flow;
+  final ValueChanged<double> onSizeChanged;
+  final ValueChanged<double> onFlowChanged;
+  const _EdgeBrushAdjust({
+    required this.size,
+    required this.flow,
+    required this.onSizeChanged,
+    required this.onFlowChanged,
+  });
+  @override
+  State<_EdgeBrushAdjust> createState() => _EdgeBrushAdjustState();
+}
+
+class _EdgeBrushAdjustState extends State<_EdgeBrushAdjust> {
+  static const double edgeWidth = 14; // thin activation strip
+  static const double panelWidth = 56; // overlay width when expanded
+  bool _open = false;
+  double _size = 0, _flow = 0;
+  Offset? _startPos;
+  double? _startSize, _startFlow;
+  String? _bubbleText;
+  Offset? _bubblePos;
+  bool _adjustSize = true;
+  double _trackHeight = 1.0;
+  double _trackTop = 0.0;
+  double? _touchFracStart;
+
+  @override
+  void initState() {
+    super.initState();
+    _size = widget.size;
+    _flow = widget.flow;
+  }
+
+  void _beginDrag(
+    Offset pos, {
+    required bool adjustSize,
+    required double trackHeight,
+    required double trackTop,
+  }) {
+    setState(() {
+      _open = true;
+      _startPos = pos;
+      // Preserve current runtime values as start values so the slider does
+      // not jump to the finger on first movement.
+      _startSize = _size;
+      _startFlow = _flow;
+      // Compute fraction at touch so movement is relative to the initial touch
+      final localDyStart = (pos.dy - trackTop).clamp(0.0, trackHeight);
+      _touchFracStart = (1.0 - (localDyStart / trackHeight)).clamp(0.0, 1.0);
+      _adjustSize = adjustSize;
+      _trackHeight = trackHeight <= 0 ? 1.0 : trackHeight;
+      _trackTop = trackTop;
+      _bubbleText = '${(_size * 100).round()}%';
+      _bubblePos = pos;
+    });
+  }
+
+  void _updateDrag(Offset pos) {
+    if (_startPos == null) return;
+    // Compute current fraction within the track and apply delta relative
+    // to the fraction at touch to avoid a jump.
+    final localDy = (pos.dy - _trackTop).clamp(0.0, _trackHeight);
+    final currFrac = (1.0 - (localDy / _trackHeight)).clamp(0.0, 1.0);
+    final baseSize = _startSize ?? _size;
+    final baseFlow = _startFlow ?? _flow;
+    final touchFrac = _touchFracStart ?? currFrac;
+    final delta = currFrac - touchFrac;
+    if (_adjustSize) {
+      _size = (baseSize + delta).clamp(0.0, 1.0);
+      widget.onSizeChanged(_size);
+      _bubbleText = '${(_size * 100).round()}%';
+    } else {
+      _flow = (baseFlow + delta).clamp(0.0, 1.0);
+      widget.onFlowChanged(_flow);
+      _bubbleText = '${(_flow * 100).round()}%';
+    }
+    setState(() => _bubblePos = pos);
+  }
+
+  void _endDrag() {
+    setState(() {
+      _bubbleText = null;
+      _bubblePos = null;
+      _open = false; // collapse after release
+      _startPos = null;
+      _touchFracStart = null;
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _EdgeBrushAdjust oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _size = widget.size;
+    _flow = widget.flow;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final h = c.maxHeight;
+        final Widget bubbleWidget = (_bubbleText != null && _bubblePos != null)
+            ? Positioned(
+                left: _bubblePos!.dx + 24,
+                top: (_bubblePos!.dy - 28).clamp(0.0, h - 24.0),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.2),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Text(
+                      _bubbleText!,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+              )
+            : const SizedBox.shrink();
+
+        return Stack(
+          children: [
+            // Edge hit zone - opaque so it captures the pointer and prevents the
+            // canvas from drawing while the user is interacting with the control.
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (e) {
+                  if (e.localPosition.dx <= edgeWidth) {
+                    final isTop = e.localPosition.dy < h * 0.5;
+                    _beginDrag(
+                      e.localPosition,
+                      adjustSize: isTop,
+                      trackHeight: h * 0.5,
+                      trackTop: isTop ? 0.0 : h * 0.5,
+                    );
+                  }
+                },
+                onPointerMove: (e) {
+                  if (_startPos != null) {
+                    _updateDrag(e.localPosition);
+                  }
+                },
+                onPointerUp: (_) => _endDrag(),
+                child: SizedBox(
+                  width: (_open || _startPos != null)
+                      ? panelWidth + 40
+                      : edgeWidth,
+                  height: h,
+                ),
+              ),
+            ),
+
+            // Slide-out panel
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOut,
+              left: _open ? 0 : -panelWidth,
+              top: 0,
+              bottom: 0,
+              width: panelWidth,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanDown: (_) {},
+                child: Container(
+                  color: Colors.black54,
+                  child: AbsorbPointer(
+                    absorbing: _startPos != null,
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 8),
+                        const Icon(Icons.brush, color: Colors.white, size: 16),
+                        Expanded(
+                          child: RotatedBox(
+                            quarterTurns: 3,
+                            child: Slider(
+                              value: _size,
+                              min: 0,
+                              max: 1,
+                              onChangeStart: (_) {
+                                setState(() {
+                                  _open = true;
+                                  _bubbleText = '${(_size * 100).round()}%';
+                                });
+                              },
+                              onChanged: (v) {
+                                setState(() {
+                                  _size = v;
+                                  _bubbleText = '${(v * 100).round()}%';
+                                });
+                                widget.onSizeChanged(v);
+                              },
+                              onChangeEnd: (_) => setState(() {
+                                _bubbleText = null;
+                                _bubblePos = null;
+                              }),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: RotatedBox(
+                            quarterTurns: 3,
+                            child: Slider(
+                              value: _flow,
+                              min: 0,
+                              max: 1,
+                              onChangeStart: (_) {
+                                setState(() {
+                                  _open = true;
+                                  _bubbleText = '${(_flow * 100).round()}%';
+                                });
+                              },
+                              onChanged: (v) {
+                                setState(() {
+                                  _flow = v;
+                                  _bubbleText = '${(v * 100).round()}%';
+                                });
+                                widget.onFlowChanged(v);
+                              },
+                              onChangeEnd: (_) => setState(() {
+                                _bubbleText = null;
+                                _bubblePos = null;
+                              }),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            bubbleWidget,
+          ],
+        );
+      },
     );
   }
 }

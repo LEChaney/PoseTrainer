@@ -16,6 +16,8 @@ class ReferenceDrawSplit extends StatelessWidget {
   final String? referenceUrl; // network reference if decoded not available
   final Widget drawingChild; // canvas or review drawing widget
   final Widget? overlayTopRight; // e.g., sliders in practice
+  final Widget? drawingOverlay; // overlay anchored within drawing area only
+  final Widget? leftRail; // optional fixed UI column on far left (wide only)
   final bool letterboxReference;
   final bool letterboxDrawing;
 
@@ -25,6 +27,8 @@ class ReferenceDrawSplit extends StatelessWidget {
     required this.referenceUrl,
     required this.drawingChild,
     this.overlayTopRight,
+    this.drawingOverlay,
+    this.leftRail,
     this.letterboxReference = true,
     this.letterboxDrawing = false,
   });
@@ -41,16 +45,43 @@ class ReferenceDrawSplit extends StatelessWidget {
               constraints.maxWidth * kCanvasFraction - kDividerThickness;
           final snappedCanvasLogicalW = _snap(rawCanvasLogicalW, dpr);
           final snappedCanvasLogicalH = _snap(constraints.maxHeight, dpr);
+          // Reserve space for an optional left rail without overlapping reference
+          // Rail sits flush (no extra padding).
+          final leftRailCoreW = leftRail == null ? 0.0 : 48.0;
+          final leftRailW = leftRailCoreW;
           final refLogicalW =
-              constraints.maxWidth - kDividerThickness - snappedCanvasLogicalW;
+              constraints.maxWidth -
+              kDividerThickness -
+              snappedCanvasLogicalW -
+              leftRailW;
           final drawingSizedBox = SizedBox(
             width: snappedCanvasLogicalW,
             height: snappedCanvasLogicalH,
-            child: _wrapDrawing(snappedCanvasLogicalW, snappedCanvasLogicalH),
+            child: Stack(
+              children: [
+                _wrapDrawing(snappedCanvasLogicalW, snappedCanvasLogicalH),
+                if (drawingOverlay != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: drawingOverlay!,
+                    ),
+                  ),
+              ],
+            ),
           );
           final refWidget = _buildReference();
           final row = Row(
             children: [
+              if (leftRail != null)
+                ConstrainedBox(
+                  constraints: BoxConstraints.tightFor(
+                    width: leftRailCoreW,
+                    height: constraints.maxHeight,
+                  ),
+                  child: leftRail!,
+                ),
               SizedBox(width: refLogicalW, child: refWidget),
               const VerticalDivider(width: kDividerThickness),
               drawingSizedBox,
@@ -67,7 +98,16 @@ class ReferenceDrawSplit extends StatelessWidget {
           final drawingSizedBox = SizedBox(
             width: snappedCanvasLogicalW,
             height: snappedCanvasLogicalH,
-            child: _wrapDrawing(snappedCanvasLogicalW, snappedCanvasLogicalH),
+            child: Stack(
+              children: [
+                _wrapDrawing(snappedCanvasLogicalW, snappedCanvasLogicalH),
+                if (drawingOverlay != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: drawingOverlay!,
+                  ),
+              ],
+            ),
           );
           final refWidget = _buildReference();
           final col = Column(
