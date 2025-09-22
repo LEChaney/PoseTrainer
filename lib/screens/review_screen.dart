@@ -133,40 +133,117 @@ class _ReviewScreenState extends State<ReviewScreen> {
     if (!overlayCapable && overlay) {
       overlay = false; // force side-by-side if neither available
     }
-    return Row(
-      children: [
-        if (overlayCapable)
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: true, label: Text('Overlay')),
-              ButtonSegment(value: false, label: Text('Side-by-side')),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Swap to stacked (phone) layout a bit earlier so sliders keep usable width
+        // on shallow/narrow aspect ratios.
+        final narrow = constraints.maxWidth < 640;
+        if (narrow) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (overlayCapable)
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: true, label: Text('Overlay')),
+                    ButtonSegment(value: false, label: Text('Side-by-side')),
+                  ],
+                  selected: {overlay},
+                  onSelectionChanged: (v) => setState(() {
+                    overlay = v.first;
+                    if (overlay && !_showHint) {
+                      _showHint = true;
+                      _scheduleHideHint();
+                    }
+                  }),
+                )
+              else
+                const Text('Side-by-side only', style: TextStyle(fontSize: 12)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  if (overlayCapable)
+                    Expanded(
+                      child: _OpacitySlider(
+                        label: 'Ref',
+                        value: refOpacity,
+                        onChanged: (v) => setState(() => refOpacity = v),
+                      ),
+                    ),
+                  if (overlayCapable) const SizedBox(width: 8),
+                  Expanded(
+                    child: _OpacitySlider(
+                      label: 'Draw',
+                      value: drawOpacity,
+                      onChanged: (v) => setState(() => drawOpacity = v),
+                    ),
+                  ),
+                ],
+              ),
             ],
-            selected: {overlay},
-            onSelectionChanged: (v) => setState(() {
-              overlay = v.first;
-              if (overlay && !_showHint) {
-                // If user switches back to overlay, show hint briefly again
-                _showHint = true;
-                _scheduleHideHint();
-              }
-            }),
-          )
-        else
-          const Text('Side-by-side only', style: TextStyle(fontSize: 12)),
-        const Spacer(),
-        if (overlayCapable)
-          _OpacitySlider(
-            label: 'Ref',
-            value: refOpacity,
-            onChanged: (v) => setState(() => refOpacity = v),
-          ),
-        if (overlayCapable) const SizedBox(width: 12),
-        _OpacitySlider(
-          label: 'Draw',
-          value: drawOpacity,
-          onChanged: (v) => setState(() => drawOpacity = v),
-        ),
-      ],
+          );
+        }
+        // wide layout: single row
+        return Row(
+          children: [
+            if (overlayCapable)
+              Flexible(
+                flex: 0,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minWidth: 160,
+                    maxWidth: math.min(constraints.maxWidth * 0.45, 420),
+                  ),
+                  child: SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(value: true, label: Text('Overlay')),
+                      ButtonSegment(value: false, label: Text('Side-by-side')),
+                    ],
+                    selected: {overlay},
+                    onSelectionChanged: (v) => setState(() {
+                      overlay = v.first;
+                      if (overlay && !_showHint) {
+                        _showHint = true;
+                        _scheduleHideHint();
+                      }
+                    }),
+                  ),
+                ),
+              )
+            else
+              const Text('Side-by-side only', style: TextStyle(fontSize: 12)),
+            const Spacer(),
+            if (overlayCapable)
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minWidth: 140,
+                    maxWidth: math.min(constraints.maxWidth * 0.35, 420),
+                  ),
+                  child: _OpacitySlider(
+                    label: 'Ref',
+                    value: refOpacity,
+                    onChanged: (v) => setState(() => refOpacity = v),
+                  ),
+                ),
+              ),
+            if (overlayCapable) const SizedBox(width: 12),
+            Flexible(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minWidth: 120,
+                  maxWidth: math.min(constraints.maxWidth * 0.25, 360),
+                ),
+                child: _OpacitySlider(
+                  label: 'Draw',
+                  value: drawOpacity,
+                  onChanged: (v) => setState(() => drawOpacity = v),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -308,8 +385,8 @@ class _OpacitySlider extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
-        SizedBox(
-          width: 120,
+        const SizedBox(width: 8),
+        Flexible(
           child: Slider(value: value, min: 0, max: 1, onChanged: onChanged),
         ),
       ],
