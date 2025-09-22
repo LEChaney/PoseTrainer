@@ -13,6 +13,23 @@ This HUD surfaces rates, pacing, latencies, and tile rasterization costs gathere
 - Tiles: Count and total ms for last tile flush; average/min/max ms per tile.
 - Tile flush rate: Flushes per second; average interval between flushes.
 
+## Search Screen HUD
+A compact bottom overlay for the Search screen to help isolate scroll jank and HTML image costs.
+
+Shown metrics (from `DebugProfiler`):
+- Builds: SearchScreen widget rebuilds per second.
+- Items: GridView itemBuilder calls per second (tile widgets built).
+- Images: `Image.network` widgets created per second in the grid.
+- Scroll: Scroll tick events per second sampled from the grid controller.
+- Velocity: Last computed scroll velocity (px/s, signed).
+
+Controls:
+- Disable images: Toggles creation of `Image.network` tiles on/off to quickly check whether jank is tied to HTML image embedding/updates (platform views) vs. layout/build work.
+
+Notes:
+- “Images” rising sharply during flings usually correlates with many HtmlElementViews being created; reducing it should reduce `HtmlViewEmbedder` work.
+- If “Items” is high but “Images” is low, build/rebuild churn may be layout or state driven rather than image instantiation.
+
 ## Metrics Details
 - Paint (fps)
   - Meaning: How often the CustomPainter finished painting.
@@ -62,6 +79,7 @@ This HUD surfaces rates, pacing, latencies, and tile rasterization costs gathere
 - Frame/Engine: Call `noteFrameFlush()` after baking/flush per frame.
 - Paint: Call `notePaintEnd(startMs)` at end of `paint()`.
 - Tiles: Surround flush with `noteTileFlushStart()`/`noteTileFlushEnd()` and call `noteTileRasterized(perTileMs)` inside your per‑tile work.
+- Search: Call `noteSearchBuild()` in SearchScreen.build; `noteGridItemBuilt()` in Grid itemBuilder; `noteSearchImageWidgetCreated()` where `Image.network` is constructed; `noteSearchScroll(offset)` in the grid scroll handler or during build when offset is known.
 
 ## UI Controls
 - Toggle HUD: App Bar speed icon or `F8`.
@@ -69,5 +87,6 @@ This HUD surfaces rates, pacing, latencies, and tile rasterization costs gathere
 
 ## Source
 - Profiler: `lib/services/debug_profiler.dart`
-- HUD: `lib/screens/practice_screen.dart` (`_ProfilerHud`)
+- Practice HUD: `lib/screens/practice_screen.dart` (`_ProfilerHud`)
+- Search HUD: `lib/screens/search_screen.dart` (`_SearchProfilerHud`)
 - Tiling: `lib/services/tiled_surface.dart`

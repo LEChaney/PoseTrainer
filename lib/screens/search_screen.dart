@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 import 'package:provider/provider.dart';
 import '../services/reference_search_service.dart';
 import '../services/debug_logger.dart';
+import '../services/debug_profiler.dart';
+import '../widgets/paint_profiler.dart';
 import 'session_runner_screen.dart';
 import 'history_screen.dart';
 import 'debug_settings_screen.dart';
@@ -39,11 +42,17 @@ class _SearchScreenState extends State<SearchScreen>
   double _headerFullHeight = 0;
   final GlobalKey _collapsedKey = GlobalKey();
   bool _measurePending = false;
+  final DebugProfiler _profiler = DebugProfiler();
+  bool _showProfilerHud = false;
+  bool _disableImages = false; // when true, do not build Image.network
+  // HUD ticker moved into the HUD widget to avoid rebuilding the whole screen.
 
   @override
   void initState() {
     super.initState();
     infoLog('SearchScreen initialized', tag: 'SearchScreen');
+    // Ensure profiler is hooked into frame timings once.
+    _profiler.attachToScheduler();
     _overlayController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 220),
@@ -77,6 +86,8 @@ class _SearchScreenState extends State<SearchScreen>
 
   @override
   Widget build(BuildContext context) {
+    final sw = Stopwatch()..start();
+    _profiler.noteSearchBuild();
     final search = context.watch<ReferenceSearchService>();
     // Schedule a measure if needed (debounced to once per frame).
     if (_measurePending == false && _headerFullHeight == 0) {
@@ -97,24 +108,24 @@ class _SearchScreenState extends State<SearchScreen>
     // Keep the seam glued: firstItemTop = topPadding - scrollOffset = desiredTop
     // => topPadding = desiredTop + scrollOffset (+ base spacing).
     final double gridTopPadding = 8.0 + offset + desiredTop;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Reference Search'),
-        actions: [
-          if (_selectedIds.isNotEmpty)
-            TextButton(
-              onPressed: () => setState(() => _selectedIds.clear()),
-              child: Text('Clear (${_selectedIds.length})'),
+    try {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Reference Search'),
+          actions: [
+            if (_selectedIds.isNotEmpty)
+              TextButton(
+                onPressed: () => setState(() => _selectedIds.clear()),
+                child: Text('Clear (${_selectedIds.length})'),
+              ),
+            IconButton(
+              tooltip: 'History',
+              icon: const Icon(Icons.history),
+              onPressed: () => Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => const HistoryScreen())),
             ),
-          IconButton(
-            tooltip: 'History',
-            icon: const Icon(Icons.history),
-            onPressed: () => Navigator.of(
-              context,
-            ).push(MaterialPageRoute(builder: (_) => const HistoryScreen())),
-          ),
-          // Debug settings button (only in debug mode)
-          if (kDebugMode)
+            // Debug settings button (only in debug mode)
             IconButton(
               tooltip: 'Debug Settings',
               icon: const Icon(Icons.bug_report),
@@ -127,104 +138,147 @@ class _SearchScreenState extends State<SearchScreen>
                 );
               },
             ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // Content grid behind the overlaying controls
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: GridView.builder(
-                controller: _scrollController,
-                padding: EdgeInsets.fromLTRB(8, gridTopPadding, 8, 8),
-                physics: const ClampingScrollPhysics(),
-                // Lower prefetch distance to reduce decode spikes on iPhone.
-                cacheExtent: MediaQuery.of(context).size.height * 0.6,
-                addAutomaticKeepAlives: false,
-                addSemanticIndexes: false,
-                addRepaintBoundaries: true,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                ),
-                itemCount: search.results.length,
-                itemBuilder: (context, i) {
-                  final r = search.results[i];
-                  final selected = _selectedIds.contains(r.id);
-                  return _ResultTile(
-                    key: ValueKey(r.id),
-                    result: r,
-                    selected: selected,
-                    onToggle: () {
-                      setState(() {
-                        if (selected) {
-                          _selectedIds.remove(r.id);
-                        } else {
-                          _selectedIds.add(r.id);
-                        }
-                      });
+            // Profiler toggle (debug only) - moved from FAB into AppBar
+            IconButton(
+              tooltip: 'Profiler',
+              icon: const Icon(Icons.speed),
+              onPressed: _toggleProfilerHud,
+            ),
+          ],
+        ),
+        body: Stack(
+          children: [
+            // Content grid behind the overlaying controls
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: PaintProfiler(
+                  profiler: _profiler,
+                  label: 'Search.GridView',
+                  child: GridView.builder(
+                    controller: _scrollController,
+                    padding: EdgeInsets.fromLTRB(8, gridTopPadding, 8, 8),
+                    physics: const ClampingScrollPhysics(),
+                    // Lower prefetch distance to reduce decode spikes on iPhone.
+                    cacheExtent: MediaQuery.of(context).size.height * 0.6,
+                    addAutomaticKeepAlives: false,
+                    addSemanticIndexes: false,
+                    addRepaintBoundaries: true,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                        ),
+                    itemCount: search.results.length,
+                    itemBuilder: (context, i) {
+                      _profiler.noteGridItemBuilt();
+                      final swItem = Stopwatch()..start();
+                      final r = search.results[i];
+                      final selected = _selectedIds.contains(r.id);
+                      final tile = _ResultTile(
+                        key: ValueKey(r.id),
+                        result: r,
+                        selected: selected,
+                        disableImage: _disableImages,
+                        onImageBuilt: (ms) {
+                          _profiler.noteSearchImageWidgetCreated();
+                          _profiler.noteSearchImageWidgetCreateDuration(ms);
+                        },
+                        onToggle: () {
+                          setState(() {
+                            if (selected) {
+                              _selectedIds.remove(r.id);
+                            } else {
+                              _selectedIds.add(r.id);
+                            }
+                          });
+                        },
+                      );
+                      swItem.stop();
+                      _profiler.noteGridItemBuildDuration(
+                        swItem.elapsedMicroseconds / 1000.0,
+                      );
+                      return tile;
                     },
+                  ),
+                ),
+              ),
+            ),
+
+            // Collapsed bar (always at top, under the expanding header)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: KeyedSubtree(
+                key: _collapsedKey,
+                child: _CollapsedControlsBar(
+                  count: _count,
+                  seconds: _seconds,
+                  unlimited: _unlimited,
+                  onStart: search.results.isEmpty
+                      ? null
+                      : () => _startSession(search),
+                  onExpand: () {
+                    _manualOverlay = true;
+                    _overlayController.animateTo(
+                      1.0,
+                      curve: Curves.easeOutCubic,
+                    );
+                  },
+                ),
+              ),
+            ),
+
+            // Expanding header overlay (clips height via controller value)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedBuilder(
+                animation: _overlayController,
+                builder: (context, _) {
+                  final v = _overlayController.value.clamp(0.0, 1.0);
+                  return PaintProfiler(
+                    profiler: _profiler,
+                    label: 'Search.HeaderOverlay',
+                    child: RepaintBoundary(
+                      child: IgnorePointer(
+                        ignoring: v <= 0.001,
+                        child: ClipRect(
+                          child: Align(
+                            alignment: Alignment.topCenter,
+                            heightFactor: v,
+                            child: Material(
+                              key: _headerKey,
+                              elevation: 3,
+                              color: Theme.of(context).colorScheme.surface,
+                              child: _buildExpandedHeader(search),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   );
                 },
               ),
             ),
-          ),
-
-          // Collapsed bar (always at top, under the expanding header)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: KeyedSubtree(
-              key: _collapsedKey,
-              child: _CollapsedControlsBar(
-                count: _count,
-                seconds: _seconds,
-                unlimited: _unlimited,
-                onStart: search.results.isEmpty
-                    ? null
-                    : () => _startSession(search),
-                onExpand: () {
-                  _manualOverlay = true;
-                  _overlayController.animateTo(1.0, curve: Curves.easeOutCubic);
-                },
-              ),
-            ),
-          ),
-
-          // Expanding header overlay (clips height via controller value)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: AnimatedBuilder(
-              animation: _overlayController,
-              builder: (context, _) {
-                final v = _overlayController.value.clamp(0.0, 1.0);
-                return RepaintBoundary(
-                  child: IgnorePointer(
-                    ignoring: v <= 0.001,
-                    child: ClipRect(
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        heightFactor: v,
-                        child: Material(
-                          key: _headerKey,
-                          elevation: 3,
-                          color: Theme.of(context).colorScheme.surface,
-                          child: _buildExpandedHeader(search),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
+          ],
+        ),
+        bottomNavigationBar: _showProfilerHud
+            ? _SearchProfilerHud(
+                profiler: _profiler,
+                disableImages: _disableImages,
+                onToggleImages: (v) => setState(() => _disableImages = v),
+                onClose: _hideProfilerHud,
+              )
+            : null,
+        floatingActionButton: null,
+      );
+    } finally {
+      sw.stop();
+      _profiler.noteSearchBuildDuration(sw.elapsedMicroseconds / 1000.0);
+    }
   }
 
   void _onScroll() {
@@ -245,6 +299,18 @@ class _SearchScreenState extends State<SearchScreen>
     if ((_overlayController.value - target).abs() > 0.001) {
       _overlayController.value = target;
     }
+
+    _profiler.noteSearchScroll(offset);
+  }
+
+  void _toggleProfilerHud() {
+    final next = !_showProfilerHud;
+    setState(() => _showProfilerHud = next);
+  }
+
+  void _hideProfilerHud() {
+    if (!_showProfilerHud) return;
+    setState(() => _showProfilerHud = false);
   }
 
   void _updateHeights() {
@@ -606,10 +672,14 @@ class _ResultTile extends StatelessWidget {
     required this.result,
     required this.selected,
     required this.onToggle,
+    this.disableImage = false,
+    this.onImageBuilt,
   });
   final ReferenceResult result;
   final bool selected;
   final VoidCallback onToggle;
+  final bool disableImage;
+  final void Function(double ms)? onImageBuilt;
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -628,25 +698,35 @@ class _ResultTile extends StatelessWidget {
           // Letterboxed areas show a neutral dark background.
           ColoredBox(
             color: const Color(0xFF202024),
-            child: Image.network(
-              result.previewUrl,
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.low,
-              cacheWidth: targetPx,
-              excludeFromSemantics: true,
-              // Prefer CanvasKit draw path, fall back to HTML element on CORS errors.
-              webHtmlElementStrategy: kIsWeb
-                  ? WebHtmlElementStrategy.fallback
-                  : WebHtmlElementStrategy.never,
-              errorBuilder: (ctx, err, st) => const ColoredBox(
-                color: Colors.black26,
-                child: Icon(
-                  Icons.broken_image,
-                  size: 20,
-                  color: Colors.white54,
-                ),
-              ),
-            ),
+            child: disableImage
+                ? const SizedBox.shrink()
+                : Builder(
+                    builder: (context) {
+                      final swImg = Stopwatch()..start();
+                      final img = Image.network(
+                        result.previewUrl,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.low,
+                        cacheWidth: targetPx,
+                        excludeFromSemantics: true,
+                        webHtmlElementStrategy: kIsWeb
+                            ? WebHtmlElementStrategy.fallback
+                            : WebHtmlElementStrategy.never,
+                        errorBuilder: (ctx, err, st) => const ColoredBox(
+                          color: Colors.black26,
+                          child: Icon(
+                            Icons.broken_image,
+                            size: 20,
+                            color: Colors.white54,
+                          ),
+                        ),
+                      );
+                      swImg.stop();
+                      final ms = swImg.elapsedMicroseconds / 1000.0;
+                      onImageBuilt?.call(ms);
+                      return img;
+                    },
+                  ),
           ),
           Positioned(
             right: 4,
@@ -681,6 +761,185 @@ class _ResultTile extends StatelessWidget {
                 child: Icon(Icons.check, size: 16, color: Colors.white),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- Search Profiler HUD --------------------------------------------------
+
+class _SearchProfilerHud extends StatefulWidget {
+  final DebugProfiler profiler;
+  final bool disableImages;
+  final ValueChanged<bool> onToggleImages;
+  final VoidCallback onClose;
+  const _SearchProfilerHud({
+    required this.profiler,
+    required this.disableImages,
+    required this.onToggleImages,
+    required this.onClose,
+  });
+  @override
+  State<_SearchProfilerHud> createState() => _SearchProfilerHudState();
+}
+
+class _SearchProfilerHudState extends State<_SearchProfilerHud> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 125), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final surface = theme.colorScheme.surface;
+    final textStyle = theme.textTheme.labelMedium;
+    final hasGridPaint = widget.profiler.hasSubtreeLabel('Search.GridView');
+    final hasHeaderPaint = widget.profiler.hasSubtreeLabel(
+      'Search.HeaderOverlay',
+    );
+    return Material(
+      color: surface.withValues(alpha: 0.95),
+      elevation: 6,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.speed, size: 16),
+                  const SizedBox(width: 8),
+                  Text('Search Profiler', style: theme.textTheme.titleSmall),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Close',
+                    icon: const Icon(Icons.close),
+                    onPressed: widget.onClose,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 16,
+                runSpacing: 8,
+                children: [
+                  _chip(
+                    'Frame',
+                    '${widget.profiler.frameAvgTotalMs.toStringAsFixed(1)}ms avg · ${widget.profiler.frameMinTotalMs.toStringAsFixed(0)}–${widget.profiler.frameMaxTotalMs.toStringAsFixed(0)}',
+                    textStyle,
+                  ),
+                  _chip(
+                    'Build',
+                    '${widget.profiler.frameAvgBuildMs.toStringAsFixed(1)}ms avg · ${widget.profiler.frameMinBuildMs.toStringAsFixed(0)}–${widget.profiler.frameMaxBuildMs.toStringAsFixed(0)}',
+                    textStyle,
+                  ),
+                  _chip(
+                    'Raster',
+                    '${widget.profiler.frameAvgRasterMs.toStringAsFixed(1)}ms avg · ${widget.profiler.frameMinRasterMs.toStringAsFixed(0)}–${widget.profiler.frameMaxRasterMs.toStringAsFixed(0)}',
+                    textStyle,
+                  ),
+                  _chip(
+                    'Builds',
+                    '${widget.profiler.searchBuildsPerSec.toStringAsFixed(1)}/s',
+                    textStyle,
+                  ),
+                  _chip(
+                    'Items',
+                    '${widget.profiler.gridItemsBuiltPerSec.toStringAsFixed(1)}/s',
+                    textStyle,
+                  ),
+                  _chip(
+                    'Images',
+                    '${widget.profiler.imageWidgetsPerSec.toStringAsFixed(1)}/s',
+                    textStyle,
+                  ),
+                  _chip('Search.build/frame', () {
+                    final avg = widget.profiler.perFrameAvgSearchBuildMs;
+                    final buildAvg = widget.profiler.frameAvgBuildMs;
+                    final pct = buildAvg <= 0 ? 0 : (avg / buildAvg * 100.0);
+                    return '${avg.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinSearchBuildMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxSearchBuildMs.toStringAsFixed(0)} (${pct.toStringAsFixed(0)}%)';
+                  }(), textStyle),
+                  _chip('Grid item/frame', () {
+                    final avg = widget.profiler.perFrameAvgGridItemBuildMs;
+                    final buildAvg = widget.profiler.frameAvgBuildMs;
+                    final pct = buildAvg <= 0 ? 0 : (avg / buildAvg * 100.0);
+                    return '${avg.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinGridItemBuildMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxGridItemBuildMs.toStringAsFixed(0)} (${pct.toStringAsFixed(0)}%)';
+                  }(), textStyle),
+                  _chip(
+                    'Image widget/frame',
+                    '${widget.profiler.perFrameAvgImageWidgetMs.toStringAsFixed(1)}ms · ${widget.profiler.perFrameMinImageWidgetMs.toStringAsFixed(0)}–${widget.profiler.perFrameMaxImageWidgetMs.toStringAsFixed(0)}',
+                    textStyle,
+                  ),
+                  if (hasGridPaint)
+                    _chip(
+                      'Grid paint',
+                      '${widget.profiler.subtreeAvgMs('Search.GridView').toStringAsFixed(1)}ms · ${widget.profiler.subtreeMinMs('Search.GridView').toStringAsFixed(0)}–${widget.profiler.subtreeMaxMs('Search.GridView').toStringAsFixed(0)}',
+                      textStyle,
+                    ),
+                  if (hasHeaderPaint)
+                    _chip(
+                      'Header paint',
+                      '${widget.profiler.subtreeAvgMs('Search.HeaderOverlay').toStringAsFixed(1)}ms · ${widget.profiler.subtreeMinMs('Search.HeaderOverlay').toStringAsFixed(0)}–${widget.profiler.subtreeMaxMs('Search.HeaderOverlay').toStringAsFixed(0)}',
+                      textStyle,
+                    ),
+                  _chip(
+                    'Scroll',
+                    '${widget.profiler.searchScrollTicksPerSec.toStringAsFixed(1)}/s',
+                    textStyle,
+                  ),
+                  _chip(
+                    'Velocity',
+                    '${widget.profiler.lastScrollVelocityPxPerSec.toStringAsFixed(0)} px/s',
+                    textStyle,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Switch.adaptive(
+                    value: widget.disableImages,
+                    onChanged: widget.onToggleImages,
+                  ),
+                  const SizedBox(width: 8),
+                  const Text('Disable images (Image.network)'),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(String label, String value, TextStyle? textStyle) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('$label: ', style: textStyle),
+          Text(value, style: textStyle?.copyWith(fontWeight: FontWeight.w600)),
         ],
       ),
     );
