@@ -115,203 +115,16 @@ class InputPoint {
   Vector2 toV() => Vector2(x, y);
 }
 
-class OneEuro {
-  // Adaptive low‑pass filter balancing noise removal & responsiveness.
-  double freq = 120; // Estimated update frequency (Hz)
-  double minCutoff = 1.0; // Base smoothing
-  double beta = 0.015; // Speed coefficient (higher -> less smoothing when fast)
-  double dCutoff = 1.0; // Derivative cutoff
-  _LowPass _x = _LowPass();
-  _LowPass _dx = _LowPass();
-  int? _lastMs;
-  int _samples = 0; // Count of processed samples for warmup
-  int warmupSamples =
-      2; // Emit first N samples unsmoothed to avoid initial kink
-  double maxDerivative = 4000; // Clamp derivative magnitude to suppress spikes
+// Smoothing removed: positions and pressure are used raw for deterministic
+// and simpler behavior while debugging. Complex smoothing algorithms were
+// causing nondeterministic issues and have been removed to simplify the
+// engine. If smoothing is reintroduced later, add focused, well-tested
+// implementations behind feature flags.
 
-  double filter(double value, int tMs) {
-    if (_lastMs != null) {
-      final dt = (tMs - _lastMs!).clamp(1, 1000);
-      freq = 1000.0 / dt; // Update frequency based on sample spacing
-    }
-    _lastMs = tMs;
-    // Warmup: output raw value for first few samples (primes filters)
-    if (_samples < warmupSamples) {
-      _samples++;
-      _x.prime(value); // Prime position filter
-      _dx.prime(0); // Prime derivative filter
-      return value;
-    }
-    var deriv = (value - _x.last) * freq;
-    // Clamp derivative to avoid sudden huge beta amplification causing a kink
-    if (deriv > maxDerivative) {
-      deriv = maxDerivative;
-    } else if (deriv < -maxDerivative) {
-      deriv = -maxDerivative;
-    }
-    final ed = _dx.filter(deriv, _alpha(dCutoff));
-    final cutoff = minCutoff + beta * ed.abs();
-    return _x.filter(value, _alpha(cutoff));
-  }
+// Smoothing removed: use raw input directly. The above smoothing classes
+// were removed to simplify debugging; pressure and position are used as-is.
 
-  // Force filter state to this value immediately (used on sharp corners)
-  void jumpTo(double value) {
-    _x.prime(value);
-    _dx.prime(0);
-    // Consider warmup satisfied so subsequent samples proceed normally.
-    _samples = warmupSamples;
-  }
-
-  double _alpha(double cutoff) {
-    final te = 1.0 / freq.clamp(1e-3, 1e9);
-    final tau = 1.0 / (2 * math.pi * cutoff.clamp(1e-3, 1e9));
-    return 1.0 / (1.0 + tau / te);
-  }
-
-  void reset() {
-    _lastMs = null;
-    _x = _LowPass();
-    _dx = _LowPass();
-    _samples = 0;
-  }
-}
-
-/// Alternate position smoothing that attempts to reduce corner wobble by
-/// (1) predicting next position via linear extrapolation, (2) using a
-/// direction-change deadband, and (3) blending prediction and raw based on
-/// instantaneous curvature + speed. Designed to be extremely low latency
-/// for decisive direction changes while still calming micro jitter.
-class PredictiveAxisSmoother {
-  double _lastX = 0;
-  double _vx = 0; // velocity (units/ms)
-  bool _init = false;
-  int _lastMs = 0;
-
-  // Tunables
-  double jitterSpeedThreshold =
-      0.002; // below this speed treat as potential jitter
-  double deadbandAngleCos =
-      0.9848; // ~10 degrees: dot > cos => similar direction
-  double velocityBlend = 0.18; // low-pass on velocity
-  double predictionHorizonMs = 10; // how far ahead to extrapolate
-  double turnBoost = 0.65; // more weight to raw when turning sharply
-
-  void reset() {
-    _init = false;
-    _vx = 0;
-  }
-
-  double filter(double x, int tMs) {
-    if (!_init) {
-      _lastX = x;
-      _lastMs = tMs;
-      _init = true;
-      return x;
-    }
-    final dtMs = (tMs - _lastMs).clamp(1, 32); // cap large gaps
-    final dt = dtMs.toDouble();
-    final vxRaw = (x - _lastX) / dt; // units per ms
-
-    // Blend velocity for stability unless direction changes sharply.
-    var vx = _vx + (vxRaw - _vx) * velocityBlend;
-
-    // Direction change detection: compare sign of velocities.
-    if ((_vx > 0 && vxRaw < 0) || (_vx < 0 && vxRaw > 0)) {
-      // Rapid reversal: trust raw immediately (defeat lag at sharp corners)
-      vx = vxRaw;
-    }
-
-    // Very low speed region: treat as jitter; pull toward previous.
-    if (vxRaw.abs() < jitterSpeedThreshold) {
-      vx *= 0.25; // heavily damp
-    }
-
-    _vx = vx;
-    _lastMs = tMs;
-
-    // Predict next position slightly ahead.
-    final pred = x + vx * predictionHorizonMs;
-
-    // Blend: if velocity is small or reversing, lean more raw; else slightly toward prediction.
-    double speed = vx.abs();
-    double k = (speed / (jitterSpeedThreshold * 8)).clamp(0, 1); // scale 0..1
-    k = math.pow(k, 0.7).toDouble();
-    double blended = x * (1 - 0.25 * k) + pred * (0.25 * k);
-
-    // Turn boost: if raw delta opposes stored velocity strongly, bias to raw.
-    if (vxRaw.sign != _vx.sign && vxRaw.abs() > jitterSpeedThreshold * 2) {
-      blended = x * (1 - turnBoost) + blended * turnBoost;
-    }
-
-    _lastX = x;
-    return blended;
-  }
-}
-
-enum SmoothingMode { none, oneEuro, predictive }
-
-/// Abstract 2D position smoothing interface.
-abstract class PositionSmoother {
-  Vector2 filter(Vector2 v, int tMs);
-  void reset();
-}
-
-/// Pass-through (no smoothing) implementation.
-class PassthroughSmoother implements PositionSmoother {
-  @override
-  Vector2 filter(Vector2 v, int tMs) => v;
-  @override
-  void reset() {}
-}
-
-/// 2D One-Euro smoother built from two scalar filters (still cleaner than
-/// scattering scalars in BrushEngine). Keeps public API vector-based.
-class OneEuroSmoother2D implements PositionSmoother {
-  final OneEuro _sx = OneEuro();
-  final OneEuro _sy = OneEuro();
-  @override
-  Vector2 filter(Vector2 v, int tMs) =>
-      Vector2(_sx.filter(v.x, tMs), _sy.filter(v.y, tMs));
-  @override
-  void reset() {
-    _sx.reset();
-    _sy.reset();
-  }
-}
-
-/// Predictive 2D smoother; mirrors prior PredictiveAxisSmoother logic but
-/// applies it per component while exposing vector API. Allows future coupling.
-class PredictiveSmoother2D implements PositionSmoother {
-  final PredictiveAxisSmoother _px = PredictiveAxisSmoother();
-  final PredictiveAxisSmoother _py = PredictiveAxisSmoother();
-  @override
-  Vector2 filter(Vector2 v, int tMs) =>
-      Vector2(_px.filter(v.x, tMs), _py.filter(v.y, tMs));
-  @override
-  void reset() {
-    _px.reset();
-    _py.reset();
-  }
-}
-
-class _LowPass {
-  double _y = 0; // Last filtered value
-  bool _init = false;
-  double get last => _y;
-  double filter(double x, double a) {
-    if (!_init) {
-      _y = x; // Prime filter with first sample
-      _init = true;
-    }
-    _y = _y + a.clamp(0, 1) * (x - _y);
-    return _y;
-  }
-
-  void prime(double x) {
-    _y = x;
-    _init = true;
-  }
-}
+// No low-pass utilities; smoothing has been removed to simplify behavior.
 
 class Dab {
   final ui.Offset center;
@@ -408,22 +221,10 @@ class BrushEngine extends ChangeNotifier {
   final StrokeLayer live =
       StrokeLayer(); // Holds dabs for active stroke (tail only once tiled baking active)
   late final TiledSurface tiles;
-  final OneEuro _fp = OneEuro()
-    ..beta = 0.02; // Pressure smoothing (slightly faster)
-  SmoothingMode positionMode = SmoothingMode.none;
-  // Unified 2D position smoother (strategy selected by mode).
-  PositionSmoother _posSmoother = PassthroughSmoother();
+  // Smoothing removed: use raw pressure and positions directly.
   Vector2? _lastDabPos; // Last dab center to enforce spacing (null => none yet)
   // Corner detection raw history (unsmoothed)
-  InputPoint? _rawPrev1; // most recent previous
-  InputPoint? _rawPrev2; // older
-  // (Legacy explicit corner snap parameters removed; adaptive curvature blending now handles wobble.)
-  // Curvature adaptive smoothing parameters
-  double curvatureMin =
-      0.15; // below this curvature (radians) -> full smoothing
-  double curvatureMax =
-      0.65; // above this curvature -> raw position (no smoothing)
-  double curvatureBlendExp = 1.6; // shaping for blend curve
+  // Raw input history removed; curvature-based blending disabled.
 
   // Track current hardness like other runtime controls for consistent access.
   double _hardness;
@@ -476,11 +277,8 @@ class BrushEngine extends ChangeNotifier {
 
   // Reset state at stroke start.
   void resetStroke() {
-    _posSmoother.reset();
-    _fp.reset();
+    // No smoothing state to reset; clear last dab so spacing restarts.
     _lastDabPos = null;
-    _rawPrev1 = null;
-    _rawPrev2 = null;
     live.clear();
   }
 
@@ -496,40 +294,9 @@ class BrushEngine extends ChangeNotifier {
   // intermediate dabs when distance > spacing to avoid gaps.
   Iterable<Dab> _emit(Iterable<InputPoint> raw) sync* {
     for (final p in raw) {
-      // --- Curvature-adaptive smoothing blend ---------------------------------
-      double blend = 1.0; // 1 => rely on filtered movement, 0 => raw
-      if (_rawPrev1 != null && _rawPrev2 != null) {
-        final v1 = Vector2(
-          _rawPrev1!.x - _rawPrev2!.x,
-          _rawPrev1!.y - _rawPrev2!.y,
-        );
-        final v2 = Vector2(p.x - _rawPrev1!.x, p.y - _rawPrev1!.y);
-        final len1 = v1.length;
-        final len2 = v2.length;
-        if (len1 > 0.0001 && len2 > 0.0001) {
-          final dot = (v1.dot(v2) / (len1 * len2)).clamp(-1.0, 1.0);
-          final angle = math.acos(dot); // radians
-          // Map angle to blend: low angle => 1 (filtered), high angle => 0 (raw)
-          if (angle <= curvatureMin) {
-            blend = 1.0;
-          } else if (angle >= curvatureMax) {
-            blend = 0.0;
-          } else {
-            final t = (angle - curvatureMin) / (curvatureMax - curvatureMin);
-            // Invert so t=0 => angle=curvatureMin => filtered
-            blend = math.pow(1 - t, curvatureBlendExp).toDouble();
-          }
-        }
-      }
-
-      // --- Position smoothing (choose strategy then blend with raw) ---------
-      final rawV = p.toV();
-      // Choose smoothing strategy via current _posSmoother; blend curvature adaptively.
-      final smoothed = _posSmoother.filter(rawV, p.tMs);
-      final filtered = smoothed * blend + rawV * (1 - blend);
-
-      // --- Pressure to size / flow curves -----------------------------------
-      final sp = _fp.filter(p.pressure.clamp(0, 1), p.tMs).clamp(0, 1);
+      // Use raw input directly: no position smoothing or pressure filtering.
+      final filtered = p.toV();
+      final sp = p.pressure.clamp(0, 1);
       // Size pressure curve (gamma <1 => aggressive early growth)
       final sizeCurve = math.pow(sp, params.sizeGamma).toDouble();
       final diameter =
@@ -601,11 +368,7 @@ class BrushEngine extends ChangeNotifier {
         tag: 'BrushEngine',
       );
     }
-    // Maintain raw history for curvature estimation.
-    for (final p in pts) {
-      _rawPrev2 = _rawPrev1;
-      _rawPrev1 = p;
-    }
+    // No smoothing: don't maintain raw history.
     int dabCount = 0;
     for (final d in _emit(pts)) {
       live.add(d);
@@ -685,25 +448,7 @@ class BrushEngine extends ChangeNotifier {
     tiles.dispose();
   }
 
-  void setPositionSmoothingMode(SmoothingMode mode) {
-    if (positionMode == mode) return;
-    positionMode = mode;
-    // Reset stroke state so switching is immediate and artifact free.
-    _lastDabPos = null;
-    switch (positionMode) {
-      case SmoothingMode.none:
-        _posSmoother = PassthroughSmoother();
-        break;
-      case SmoothingMode.oneEuro:
-        _posSmoother = OneEuroSmoother2D();
-        break;
-      case SmoothingMode.predictive:
-        _posSmoother = PredictiveSmoother2D();
-        break;
-    }
-    _posSmoother.reset();
-    notifyListeners();
-  }
+  // Position smoothing removed; this method intentionally omitted.
 }
 
 // NOTE: Sprite generation removed in analytic circle version. Keeping a stub
