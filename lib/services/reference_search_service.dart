@@ -55,7 +55,7 @@ class ReferenceSearchService extends ChangeNotifier {
       // Collapse whitespace to '+' which e621 expects for tag separation.
       final q = cleaned.replaceAll(RegExp(r'\s+'), '+');
       final uri = Uri.parse(
-        'https://e621.net/posts.json?limit=30&tags=rating:safe+$q',
+        'https://e621.net/posts.json?limit=30&tags=rating:safe+-cub+$q',
       );
       final resp = await http.get(
         uri,
