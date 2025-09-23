@@ -143,7 +143,7 @@ class TiledSurface {
       }
       _dabLogCount++;
       // Render a radial alpha mask using a hard core up to coreRatio, then linear fade to edge
-      drawFeatheredDab(canvas, local, d.radius, d.color, d.coreRatio);
+      drawDabWithColorAndCore(canvas, local, d.radius, d.color, d.coreRatio);
     }
     final pic = recorder.endRecording();
     final img = await pic.toImage(tileSize, tileSize);

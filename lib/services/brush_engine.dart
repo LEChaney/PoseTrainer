@@ -356,7 +356,6 @@ class StrokeLayer {
   }) {
     // Radial gradient dab with hardness-controlled core and feather.
     // hardness 0 => small core, long feather. hardness 1 => large core, short feather.
-    final coreRatio = coreRatioFromHardness(_hardness);
 
     // Calculate dynamic logging rate based on brush parameters
     // Smaller brushes with tighter spacing generate more dabs, so log less frequently
@@ -376,19 +375,23 @@ class StrokeLayer {
 
     int i = 0;
     for (final dab in _dabs) {
-      final a = (dab.alpha * 255).clamp(0, 255).round();
-      final centerColor = ui.Color.fromARGB(a, 255, 255, 255);
       // Smart rate-limited logging based on brush parameters
-
       if (_dabLogCount % logRate == 0) {
         debugLog(
-          'Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=$a (${i + 1}/${_dabs.length}) [logRate=$logRate]',
+          'Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=${(dab.alpha * 255).round()} (${i + 1}/${_dabs.length}) [logRate=$logRate]',
           tag: 'StrokeLayer',
         );
       }
       _dabLogCount++;
       i++;
-      drawFeatheredDab(canvas, dab.center, dab.radius, centerColor, coreRatio);
+      // Centralized helper handles alpha->color and hardness->coreRatio.
+      drawDabWithAlphaAndHardness(
+        canvas,
+        dab.center,
+        dab.radius,
+        dab.alpha,
+        _hardness,
+      );
     }
   }
 }
