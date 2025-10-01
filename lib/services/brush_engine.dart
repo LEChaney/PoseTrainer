@@ -315,7 +315,6 @@ class BrushEngine extends ChangeNotifier {
 
       // --- Emit first dab immediately ---------------------------------------
       if (_lastDabPos == null) {
-        _lastDabPos = filtered.clone();
         final radius = diameter * 0.5;
         final alpha = flow * params.opacity;
         debugLog(
@@ -327,6 +326,8 @@ class BrushEngine extends ChangeNotifier {
           tag: 'BrushEngine',
         );
         yield Dab(ui.Offset(filtered.x, filtered.y), radius, alpha);
+        // Advance last position to the emitted dab (same as filtered for first dab)
+        _lastDabPos = filtered.clone();
         continue;
       }
 
@@ -335,26 +336,26 @@ class BrushEngine extends ChangeNotifier {
       final delta = filtered - lastPos;
       final dist = delta.length;
       if (dist < spacingPx) {
-        continue; // not far enough yet
+        // Not far enough yet: keep last emitted where it was to preserve leftover distance
+        continue;
       }
       final dir = delta / dist; // normalized
       var traveled = spacingPx;
+      Vector2?
+      lastEmitted; // track the last emitted dab position for carry-over
       while (traveled <= dist) {
         final pos = lastPos + dir * traveled;
         final radius = diameter * 0.5;
         final alpha = flow * params.opacity;
         // Per-dab logging removed (too verbose)
         yield Dab(ui.Offset(pos.x, pos.y), radius, alpha);
+        lastEmitted = pos;
         traveled += spacingPx;
       }
-      // Remove per-stroke interpolation logging (too verbose for normal drawing)
-      // if (dabsEmitted > 0) {
-      //   debugLog(
-      //     'Emitted $dabsEmitted interpolated dabs, dist=${dist.toStringAsFixed(1)}, spacing=${spacingPx.toStringAsFixed(1)}',
-      //     tag: 'BrushEngine',
-      //   );
-      // }
-      _lastDabPos = filtered.clone();
+      // Advance the last dab position only to the last emitted dab to retain leftover distance.
+      if (lastEmitted != null) {
+        _lastDabPos = lastEmitted.clone();
+      }
     }
   }
 
