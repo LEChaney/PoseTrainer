@@ -538,8 +538,8 @@ class _CanvasAreaState extends State<_CanvasArea> {
             final wasPanning =
                 widget.ctrlDown || (_multiPan && _touchPoints.length >= 1);
             if (!wasPanning) {
-              // Ensure any live dabs are baked at stroke end.
-              await widget.engine.bakeLiveToTiles();
+              // Commit live stroke tiles into the base on stroke end.
+              await widget.engine.commitLiveToBase();
             }
             _lastPanPos = null;
           },
@@ -679,7 +679,7 @@ class _BrushSliders extends StatefulWidget {
 
 class _BrushSlidersState extends State<_BrushSliders> {
   double _size = 0.1; // runtime size multiplier (initialized in initState)
-  double _flow = 0.5; // runtime flow multiplier (initialized in initState)
+  double _opacity = 1.0; // global opacity multiplier
   double _hardness = 1.0; // initialized in initState
 
   @override
@@ -688,7 +688,7 @@ class _BrushSlidersState extends State<_BrushSliders> {
     // Sync initial slider positions with engine's current runtime state
     // so defaults only need to be set in one place (BrushEngine/BrushParams).
     _size = widget.engine.sizeScale;
-    _flow = widget.engine.flowScale;
+    _opacity = widget.engine.opacityScale;
     _hardness = widget.engine.hardness;
   }
 
@@ -722,13 +722,13 @@ class _BrushSlidersState extends State<_BrushSliders> {
               max: 1.0,
             ),
             _buildSlider(
-              label: 'Flow',
-              value: _flow,
+              label: 'Opacity',
+              value: _opacity,
               onChanged: (v) {
-                setState(() => _flow = v);
-                widget.engine.setFlowScale(v);
+                setState(() => _opacity = v);
+                widget.engine.setOpacityScale(v);
               },
-              min: 0.01,
+              min: 0.0,
               max: 1.0,
             ),
             _buildSlider(
@@ -791,15 +791,15 @@ class _BrushControls extends StatefulWidget {
 
 class _BrushControlsState extends State<_BrushControls> {
   late double _size;
-  late double _flow;
+  late double _opacity;
   late double _hardness;
-  bool _hardnessOpen = false; // slide-out state on wide screens
+  bool _advancedOpen = false; // show advanced controls (flow + hardness)
 
   @override
   void initState() {
     super.initState();
     _size = widget.engine.sizeScale;
-    _flow = widget.engine.flowScale;
+    _opacity = widget.engine.opacityScale;
     _hardness = widget.engine.hardness;
   }
 
@@ -813,14 +813,14 @@ class _BrushControlsState extends State<_BrushControls> {
   Widget _buildEdgeOverlay(BuildContext context) {
     return _EdgeBrushAdjust(
       size: _size,
-      flow: _flow,
+      flow: _opacity,
       onSizeChanged: (v) {
         setState(() => _size = v.clamp(0.0, 1.0));
         widget.engine.setSizeScale(_size);
       },
       onFlowChanged: (v) {
-        setState(() => _flow = v.clamp(0.0, 1.0));
-        widget.engine.setFlowScale(_flow);
+        setState(() => _opacity = v.clamp(0.0, 1.0));
+        widget.engine.setOpacityScale(_opacity);
       },
     );
   }
@@ -845,36 +845,50 @@ class _BrushControlsState extends State<_BrushControls> {
           const SizedBox(height: 8),
           _VerticalSlider(
             icon: Icons.opacity,
-            value: _flow,
+            value: _opacity,
             onChanged: (v) {
-              setState(() => _flow = v);
-              widget.engine.setFlowScale(v);
+              setState(() => _opacity = v);
+              widget.engine.setOpacityScale(v);
             },
           ),
           const SizedBox(height: 8),
-          // Hardness slide-out: toggled button that reveals a slim vertical slider inline
+          // Advanced slide-out: hardness + flow
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => setState(() => _hardnessOpen = !_hardnessOpen),
+            onTap: () => setState(() => _advancedOpen = !_advancedOpen),
             child: const Padding(
               padding: EdgeInsets.symmetric(vertical: 6),
               child: Icon(Icons.tune, color: Colors.white),
             ),
           ),
           AnimatedCrossFade(
-            crossFadeState: _hardnessOpen
+            crossFadeState: _advancedOpen
                 ? CrossFadeState.showFirst
                 : CrossFadeState.showSecond,
             duration: const Duration(milliseconds: 150),
             firstChild: Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: _VerticalSlider(
-                icon: Icons.contrast,
-                value: _hardness,
-                onChanged: (v) {
-                  setState(() => _hardness = v);
-                  widget.engine.setHardness(v);
-                },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _VerticalSlider(
+                    icon: Icons.contrast,
+                    value: _hardness,
+                    onChanged: (v) {
+                      setState(() => _hardness = v);
+                      widget.engine.setHardness(v);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _VerticalSlider(
+                    icon: Icons.opacity_outlined,
+                    value: widget.engine.flowScale,
+                    onChanged: (v) {
+                      widget.engine.setFlowScale(v);
+                      setState(() {});
+                    },
+                  ),
+                ],
               ),
             ),
             secondChild: const SizedBox.shrink(),
@@ -884,8 +898,6 @@ class _BrushControlsState extends State<_BrushControls> {
     );
     return SizedBox(width: 48, child: rail);
   }
-
-  // removed obsolete narrow sheet slider helpers
 }
 
 /// Compact vertical slider with an icon, used in the left rail.
@@ -1281,7 +1293,7 @@ class _PracticePainter extends CustomPainter {
       // Final composite already tinted in renderFull
       canvas.drawImage(baseImage, ui.Offset.zero, ui.Paint());
     } else {
-      // Build mask layer (tiles + live), then tint with stroke color
+      // Build mask layer (committed tiles + live stroke tiles + live analytic dabs), then tint with stroke color
       final bounds = ui.Rect.fromLTWH(
         0,
         0,
@@ -1289,9 +1301,10 @@ class _PracticePainter extends CustomPainter {
         viewHeightPx.toDouble(),
       );
       canvas.saveLayer(bounds, ui.Paint());
-      // Draw white-alpha tiles and live dabs
-      // Per-frame paint operation logging removed (too verbose)
+      // Draw committed white-alpha tiles and live stroke tiles
       engine.tiles.draw(canvas);
+      engine.liveTiles.draw(canvas);
+      // Optionally also draw analytic dabs that aren't yet baked this frame
       live.draw(
         canvas,
         maxSizePx: engine.params.maxSizePx,

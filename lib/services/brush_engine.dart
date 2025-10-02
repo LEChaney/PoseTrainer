@@ -33,11 +33,10 @@ class BrushParams {
   final double maxSizePx; // Base brush diameter at high pressure
   final double spacing; // Dab spacing as fraction of diameter
 
-  // Opacity (flow) modeling
+  // Per-dab flow modeling (density of ink per stamp)
   final double maxFlow; // Target (max) per-dab flow at/after maxFlowPressure
   final double minFlow; // Flow at zero pressure (sketch taper transparency)
-  final double
-  maxFlowPressure; // Pressure level where "flow" reaches target ( <1 => earlier saturation )
+  final double maxFlowPressure; // Pressure level where flow reaches target
 
   // Size taper modeling
   final double minScale; // Diameter fraction at zero pressure (0.05 => 5%)
@@ -47,14 +46,16 @@ class BrushParams {
   // Edge softness
   final double hardness; // 0 soft halo, 1 hard edge
 
-  // Global multiplier
-  final double opacity; // Overall stroke opacity cap
+  // Per-stroke opacity cap (used within-stroke as a clamp conceptually)
+  final double opacity; // 0..1
   // Stroke color (currently single monochrome brush). Alpha is modulated per dab.
   final ui.Color color;
 
   // UI runtime defaults (for sliders)
   final double runtimeSizeScale; // 0.01..1.0
-  final double runtimeFlowScale; // 0.01..1.0
+  final double runtimeFlowScale; // 0.01..1.0 (advanced)
+  final double
+  runtimeOpacityScale; // 0.0..1.0 global stroke blend when committing
 
   const BrushParams({
     // Loose construction sketch defaults (SAI-like)
@@ -71,6 +72,7 @@ class BrushParams {
     this.color = kBrushDarkDefault,
     this.runtimeSizeScale = 0.75,
     this.runtimeFlowScale = 0.3,
+    this.runtimeOpacityScale = 1.0,
   });
 
   BrushParams copyWith({
@@ -87,6 +89,7 @@ class BrushParams {
     ui.Color? color,
     double? runtimeSizeScale,
     double? runtimeFlowScale,
+    double? runtimeOpacityScale,
   }) {
     return BrushParams(
       maxSizePx: maxSizePx ?? this.maxSizePx,
@@ -102,6 +105,7 @@ class BrushParams {
       color: color ?? this.color,
       runtimeSizeScale: runtimeSizeScale ?? this.runtimeSizeScale,
       runtimeFlowScale: runtimeFlowScale ?? this.runtimeFlowScale,
+      runtimeOpacityScale: runtimeOpacityScale ?? this.runtimeOpacityScale,
     );
   }
 }
@@ -129,8 +133,13 @@ class InputPoint {
 class Dab {
   final ui.Offset center;
   final double radius;
-  final double alpha;
-  const Dab(this.center, this.radius, this.alpha);
+
+  /// Per-dab flow (density per stamp), 0..1
+  final double flow;
+
+  /// Pressure-driven opacity clamp for this dab, 0..1
+  final double opacityClamp;
+  const Dab(this.center, this.radius, this.flow, this.opacityClamp);
 }
 
 class StrokeLayer {
@@ -190,19 +199,21 @@ class StrokeLayer {
     for (final dab in _dabs) {
       // Smart rate-limited logging based on brush parameters
       if (_dabLogCount % logRate == 0) {
+        final previewAlpha = (dab.flow * dab.opacityClamp).clamp(0.0, 1.0);
         debugLog(
-          'Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=${(dab.alpha * 255).round()} (${i + 1}/${_dabs.length}) [logRate=$logRate]',
+          'Drawing dab at ${dab.center}, radius=${dab.radius.toStringAsFixed(1)}, alpha=${(previewAlpha * 255).round()} (${i + 1}/${_dabs.length}) [logRate=$logRate]',
           tag: 'StrokeLayer',
         );
       }
       _dabLogCount++;
       i++;
       // Centralized helper handles alpha->color and hardness->coreRatio.
+      // Preview alpha uses flow * opacityClamp.
       drawDabWithAlphaAndHardness(
         canvas,
         dab.center,
         dab.radius,
-        dab.alpha,
+        (dab.flow * dab.opacityClamp).clamp(0.0, 1.0),
         _hardness,
       );
     }
@@ -220,7 +231,9 @@ class BrushEngine extends ChangeNotifier {
   final BrushParams params;
   final StrokeLayer live =
       StrokeLayer(); // Holds dabs for active stroke (tail only once tiled baking active)
-  late final TiledSurface tiles;
+  late final TiledSurface tiles; // committed base mask tiles
+  late final TiledSurface
+  liveTiles; // current stroke mask tiles (cleared on commit)
   // Smoothing removed: use raw pressure and positions directly.
   Vector2? _lastDabPos; // Last dab center to enforce spacing (null => none yet)
   // Corner detection raw history (unsmoothed)
@@ -233,11 +246,19 @@ class BrushEngine extends ChangeNotifier {
 
   BrushEngine(this.params, {this.profiler}) : _hardness = params.hardness {
     tiles = TiledSurface(tileSize: 256, profiler: profiler);
+    liveTiles = TiledSurface(tileSize: 256, profiler: profiler);
     _strokeColorFallback = params.color;
     // Initialize runtime scales from params so UI can change defaults centrally.
     _runtimeSizeScale = params.runtimeSizeScale;
     _runtimeFlowScale = params.runtimeFlowScale;
+    _runtimeOpacityScale = params.runtimeOpacityScale;
   }
+
+  // Generic input mapping (pressure/tilt/etc.) – swappable extractors.
+  // Today we only have pressure; adding tilt/rotation later becomes trivial.
+  double Function(InputPoint) sizeInput = (p) => p.pressure;
+  double Function(InputPoint) opacityInput = (p) => p.pressure;
+  double Function(InputPoint) flowInput = (p) => 1.0; // constant by default
 
   // Current stroke color (shared with StrokeLayer draw). For now single global.
   static ui.Color _strokeColorFallback = kBrushDarkDefault;
@@ -250,11 +271,13 @@ class BrushEngine extends ChangeNotifier {
   // Runtime multipliers (temporary before full preset UI). These *only*
   // scale size and flow curves; base param object stays immutable.
   double _runtimeSizeScale = 0.1; // 1.0 => use params.sizePx
-  double _runtimeFlowScale = 0.5; // 1.0 => use computed flow as-is
+  double _runtimeFlowScale = 0.5; // advanced control
+  double _runtimeOpacityScale = 1.0; // global blend when committing stroke
 
   // Expose current runtime controls so UI can initialize from engine state.
   double get sizeScale => _runtimeSizeScale;
-  double get flowScale => _runtimeFlowScale;
+  double get flowScale => _runtimeFlowScale; // advanced
+  double get opacityScale => _runtimeOpacityScale;
   double get hardness => _hardness;
 
   void setSizeScale(double v) {
@@ -264,6 +287,11 @@ class BrushEngine extends ChangeNotifier {
 
   void setFlowScale(double v) {
     _runtimeFlowScale = v.clamp(0.01, 1.0);
+    notifyListeners();
+  }
+
+  void setOpacityScale(double v) {
+    _runtimeOpacityScale = v.clamp(0.0, 1.0);
     notifyListeners();
   }
 
@@ -280,6 +308,8 @@ class BrushEngine extends ChangeNotifier {
     // No smoothing state to reset; clear last dab so spacing restarts.
     _lastDabPos = null;
     live.clear();
+    // Start a fresh live stroke layer per stroke
+    liveTiles.clear();
   }
 
   /// Clear all stroke data (live + committed tiles) and notify listeners so
@@ -287,6 +317,7 @@ class BrushEngine extends ChangeNotifier {
   void clearAll() {
     resetStroke();
     tiles.clear();
+    liveTiles.clear();
     notifyListeners();
   }
 
@@ -296,36 +327,39 @@ class BrushEngine extends ChangeNotifier {
     for (final p in raw) {
       // Use raw input directly: no position smoothing or pressure filtering.
       final filtered = p.toV();
-      final sp = p.pressure.clamp(0, 1);
+      final spSize = sizeInput(p).clamp(0.0, 1.0);
+      final spOpacity = opacityInput(p).clamp(0.0, 1.0);
       // Size pressure curve (gamma <1 => aggressive early growth)
-      final sizeCurve = math.pow(sp, params.sizeGamma).toDouble();
+      final sizeCurve = math.pow(spSize, params.sizeGamma).toDouble();
       final diameter =
           (params.maxSizePx * _runtimeSizeScale) *
           (params.minScale + (1 - params.minScale) * sizeCurve);
       final spacingPx = (params.spacing.clamp(0.05, 1.0)) * diameter;
-      // Flow (density) curve: normalize pressure by maxFlowPressure then apply gamma
-      final flowNorm = (sp / params.maxFlowPressure).clamp(0.0, 1.0);
-      final flowCurve = math.pow(flowNorm, params.flowGamma).toDouble();
-      final baseFlow =
-          (params.minFlow + (params.maxFlow - params.minFlow) * flowCurve)
-              .clamp(0.0, 1.0);
+      // Pressure→opacity mapping (default). Flow remains an advanced control (constant along stroke).
       final flow =
-          (params.minFlow + (baseFlow - params.minFlow) * _runtimeFlowScale)
+          (params.minFlow +
+                  (params.maxFlow - params.minFlow) * _runtimeFlowScale)
               .clamp(0.0, 1.0);
+      final opacityFromPressure = math
+          .pow(spOpacity, params.flowGamma)
+          .toDouble()
+          .clamp(0.0, 1.0);
 
       // --- Emit first dab immediately ---------------------------------------
       if (_lastDabPos == null) {
         final radius = diameter * 0.5;
-        final alpha = flow * params.opacity;
+        final alphaFlow = flow;
+        final opacityClamp = opacityFromPressure; // shader will enforce clamp
         debugLog(
-          'First dab: pos=${filtered.x.toStringAsFixed(1)},${filtered.y.toStringAsFixed(1)}, radius=${radius.toStringAsFixed(2)}, alpha=${alpha.toStringAsFixed(3)}, pressure=${p.pressure.toStringAsFixed(3)}',
+          'First dab: pos=${filtered.x.toStringAsFixed(1)},${filtered.y.toStringAsFixed(1)}, radius=${radius.toStringAsFixed(2)}, flow=${alphaFlow.toStringAsFixed(3)}, opacityClamp=${opacityClamp.toStringAsFixed(3)}, pressure=${p.pressure.toStringAsFixed(3)}',
           tag: 'BrushEngine',
         );
-        debugLog(
-          'Flow calc: sp=${sp.toStringAsFixed(3)}, flowNorm=${flowNorm.toStringAsFixed(3)}, flowCurve=${flowCurve.toStringAsFixed(3)}, baseFlow=${baseFlow.toStringAsFixed(3)}, flow=${flow.toStringAsFixed(3)}, runtimeFlowScale=${_runtimeFlowScale.toStringAsFixed(3)}',
-          tag: 'BrushEngine',
+        yield Dab(
+          ui.Offset(filtered.x, filtered.y),
+          radius,
+          alphaFlow,
+          opacityClamp,
         );
-        yield Dab(ui.Offset(filtered.x, filtered.y), radius, alpha);
         // Advance last position to the emitted dab (same as filtered for first dab)
         _lastDabPos = filtered.clone();
         continue;
@@ -346,9 +380,10 @@ class BrushEngine extends ChangeNotifier {
       while (traveled <= dist) {
         final pos = lastPos + dir * traveled;
         final radius = diameter * 0.5;
-        final alpha = flow * params.opacity;
+        final alphaFlow = flow;
+        final opacityClamp = opacityFromPressure;
         // Per-dab logging removed (too verbose)
-        yield Dab(ui.Offset(pos.x, pos.y), radius, alpha);
+        yield Dab(ui.Offset(pos.x, pos.y), radius, alphaFlow, opacityClamp);
         lastEmitted = pos;
         traveled += spacingPx;
       }
@@ -408,8 +443,8 @@ class BrushEngine extends ChangeNotifier {
       return;
     }
 
-    // Direct baking: rasterize dabs immediately to their affected tiles
-    await tiles.bakeDabs(
+    // Rasterize dabs to the live stroke layer
+    await liveTiles.bakeDabs(
       live._dabs,
       coreRatioFromHardness(_hardness),
       maxSizePx: params.maxSizePx,
@@ -424,10 +459,19 @@ class BrushEngine extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Commit the current live stroke into the base tiles with global opacity scaling.
+  Future<void> commitLiveToBase() async {
+    // Ensure all live dabs have been rasterized to the liveTiles first.
+    await bakeLiveToTiles();
+    await tiles.blendFrom(liveTiles, opacityScale: _runtimeOpacityScale);
+    liveTiles.clear();
+    notifyListeners();
+  }
+
   /// Compose a full image (used when finishing session). Draws tiles then optional live tail.
   Future<ui.Image> renderFull(int width, int height) async {
-    // Ensure any remaining live dabs baked first for consistency.
-    await bakeLiveToTiles();
+    // Ensure any remaining live dabs are committed first for consistency.
+    await commitLiveToBase();
     // Compose tiles as mask, then tint with current color to produce final image.
     final rect = ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble());
     final recorder = ui.PictureRecorder();
@@ -447,6 +491,7 @@ class BrushEngine extends ChangeNotifier {
 
   void disposeResources() {
     tiles.dispose();
+    liveTiles.dispose();
   }
 
   // Position smoothing removed; this method intentionally omitted.
