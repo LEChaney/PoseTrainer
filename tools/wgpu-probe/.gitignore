@@ -1,0 +1,23 @@
+## Rust build artifacts
+/target/
+
+## wasm-bindgen / wasm-pack / trunk outputs
+/wasm-bindgen/
+/wasm-opt/
+/pkg/
+/dist/
+
+## Trunk cache / assets
+.cache/
+
+## Editor/project files
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+## Cargo lock: keep if you prefer deterministic builds, uncomment to ignore
+# Cargo.lock

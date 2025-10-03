@@ -1,0 +1,25 @@
+[package]
+name = "wgpu-probe"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "wgpu-probe"
+path = "src/main.rs"
+
+[dependencies]
+wgpu = "27"
+cfg-if = "1"
+pollster = "0.4"
+anyhow = "1"
+
+# Web (wasm) support
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = [
+    "Window", "Document", "Element", "console", "HtmlCanvasElement", "Node", "HtmlElement"
+] }
