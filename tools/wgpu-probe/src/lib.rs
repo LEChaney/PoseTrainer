@@ -35,7 +35,12 @@ pub async fn run(is_web: bool) -> anyhow::Result<()> {
         height = 360;
         canvas.set_width(width);
         canvas.set_height(height);
-        doc.body().ok_or_else(|| anyhow::anyhow!("no body"))?.append_child(&canvas).map_err(js_err)?;
+        // Prefer appending to a specific container if present (for embedding in Flutter web)
+        let root: web_sys::Element = doc
+            .get_element_by_id("wgpu-probe-container")
+            .map(|e| e.unchecked_into())
+            .unwrap_or_else(|| doc.body().expect("no body").unchecked_into());
+        root.append_child(&canvas).map_err(js_err)?;
         // Pass the target by value to satisfy either Into<SurfaceTarget> or &SurfaceTarget signatures.
         surface = Some(instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas))

@@ -20,7 +20,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'services/persistence_util.dart';
 import 'services/debug_logger.dart';
 import 'widgets/debug_overlay.dart';
-import 'screens/search_screen.dart';
+import 'widgets/wgpu_probe_view.dart';
 
 /// Application entry point. In Dart, execution starts with `main()`.
 /// `runApp` attaches the widget tree to the screen and starts the rendering
@@ -64,7 +64,10 @@ class PoseTrainerApp extends StatelessWidget {
           useMaterial3: true,
         ),
         // First screen presented to the user: search for a reference image.
-        home: const DebugOverlay(child: SearchScreen()),
+        // Quick toggle: use WgpuProbeView for manual testing on web/windows; switch back when done.
+        home: const DebugOverlay(
+          child: Scaffold(body: Center(child: WgpuProbeView())),
+        ),
       ),
     );
   }
