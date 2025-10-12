@@ -20,7 +20,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'services/persistence_util.dart';
 import 'services/debug_logger.dart';
 import 'widgets/debug_overlay.dart';
-import 'screens/search_screen.dart';
+import 'screens/start_screen.dart';
 
 /// Application entry point. In Dart, execution starts with `main()`.
 /// `runApp` attaches the widget tree to the screen and starts the rendering
@@ -63,8 +63,8 @@ class PoseTrainerApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
           useMaterial3: true,
         ),
-        // First screen presented to the user: search for a reference image.
-        home: const DebugOverlay(child: SearchScreen()),
+        // First screen: mode selection (e621 search or local folders).
+        home: const DebugOverlay(child: StartScreen()),
       ),
     );
   }
