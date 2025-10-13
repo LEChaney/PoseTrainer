@@ -103,6 +103,7 @@ class _HistoryTile extends StatelessWidget {
           builder: (ctx) => ReviewScreen(
             reference: session.reference,
             referenceUrl: session.referenceUrl,
+            driveFileId: session.driveFileId,
             drawing: session.drawing,
             sourceUrl: session.sourceUrl,
             initialOverlay: session.overlay,

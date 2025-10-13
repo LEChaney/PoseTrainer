@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import '../models/practice_session.dart';
 import '../models/review_result.dart';
 import '../services/session_service.dart';
+import '../services/google_drive_folder_service.dart';
 
 // review_screen.dart
 // ------------------
@@ -30,6 +31,8 @@ import '../services/session_service.dart';
 class ReviewScreen extends StatefulWidget {
   final ui.Image? reference; // may be null when only URL available (web)
   final String? referenceUrl; // raw network fallback (web only side-by-side)
+  final String?
+  driveFileId; // Google Drive file ID for on-demand full image loading
   final ui.Image drawing;
   final String sourceUrl;
   final OverlayTransform? initialOverlay; // persisted transform
@@ -39,6 +42,7 @@ class ReviewScreen extends StatefulWidget {
     super.key,
     required this.reference,
     this.referenceUrl,
+    this.driveFileId,
     required this.drawing,
     required this.sourceUrl,
     this.initialOverlay,
@@ -58,6 +62,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
   bool _showHint = true;
   Timer? _hintTimer;
 
+  // On-demand full image loading for Drive sessions
+  ui.Image? _fullReference; // Full resolution reference image
+  bool _loadingFullImage = false;
+  String? _loadError;
+
   @override
   void initState() {
     super.initState();
@@ -66,6 +75,51 @@ class _ReviewScreenState extends State<ReviewScreen> {
       _offset = widget.initialOverlay!.offset;
     }
     _scheduleHideHint();
+
+    // If this is a Drive session (has driveFileId but reference is thumbnail),
+    // start loading the full resolution image
+    if (widget.driveFileId != null && widget.reference != null) {
+      _loadFullImage();
+    }
+  }
+
+  /// Downloads full resolution image from Google Drive for Drive sessions.
+  Future<void> _loadFullImage() async {
+    if (_loadingFullImage || _fullReference != null) return;
+
+    setState(() {
+      _loadingFullImage = true;
+      _loadError = null;
+    });
+
+    try {
+      final driveService = context.read<GoogleDriveFolderService>();
+      final imageBytes = await driveService.downloadImageBytes(
+        widget.driveFileId!,
+      );
+
+      if (imageBytes == null) {
+        throw Exception('Failed to download image from Drive');
+      }
+
+      // Decode the full resolution image
+      final codec = await ui.instantiateImageCodec(imageBytes);
+      final frame = await codec.getNextFrame();
+
+      if (mounted) {
+        setState(() {
+          _fullReference = frame.image;
+          _loadingFullImage = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadError = 'Failed to load full image: $e';
+          _loadingFullImage = false;
+        });
+      }
+    }
   }
 
   @override
@@ -88,6 +142,10 @@ class _ReviewScreenState extends State<ReviewScreen> {
       setState(() => _showHint = false);
     }
   }
+
+  /// Returns the best available reference image: full resolution if loaded,
+  /// otherwise the thumbnail from widget.reference.
+  ui.Image? get _effectiveReference => _fullReference ?? widget.reference;
 
   @override
   Widget build(BuildContext context) {
@@ -125,7 +183,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   // --- UI Helpers -----------------------------------------------------------
 
   Widget _buildControls() {
-    final hasDecodedRef = widget.reference != null;
+    final hasDecodedRef = _effectiveReference != null;
     final hasUrlRef = widget.referenceUrl != null;
     final overlayCapable =
         hasDecodedRef ||
@@ -248,6 +306,36 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   Widget _buildComparison() {
+    // Show loading indicator if we're loading the full image
+    if (_loadingFullImage) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading full resolution image...'),
+          ],
+        ),
+      );
+    }
+
+    // Show error if loading failed
+    if (_loadError != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(_loadError!, style: const TextStyle(color: Colors.red)),
+            const SizedBox(height: 16),
+            TextButton(onPressed: _loadFullImage, child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
+
     // Cases order:
     // 1. URL-only + overlay -> widget stack overlay (no pixel access).
     // 2. Decoded + overlay -> painter overlay (pixel accurate).
@@ -256,7 +344,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
     if (overlay) {
       // Wrap overlay modes in an interactive container that supports
       // pinch-to-zoom, two-finger pan, ctrl+drag pan, and ctrl+wheel zoom.
-      if (widget.reference == null && widget.referenceUrl != null) {
+      if (_effectiveReference == null && widget.referenceUrl != null) {
         final overlayWidget = _InteractiveUrlOverlay(
           refChild: Image.network(
             widget.referenceUrl!,
@@ -283,9 +371,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
           children: [overlayWidget, if (_showHint) _buildOverlayHint(context)],
         );
       }
-      if (widget.reference != null) {
+      if (_effectiveReference != null) {
         final overlayWidget = _InteractiveDecodedOverlay(
-          refImg: widget.reference!,
+          refImg: _effectiveReference!,
           drawImg: widget.drawing,
           refOpacity: refOpacity,
           drawOpacity: drawOpacity,
@@ -308,7 +396,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
       }
     }
     return ReferenceDrawSplit(
-      referenceImage: widget.reference,
+      referenceImage: _effectiveReference,
       referenceUrl: widget.referenceUrl,
       letterboxReference: true,
       letterboxDrawing: true,

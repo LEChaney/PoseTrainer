@@ -13,6 +13,11 @@ class StoredSession {
   final String id;
   final String sourceUrl;
   final String? referenceUrl;
+  final String?
+  driveFileId; // Google Drive file ID for re-downloading full image
+  final Uint8List
+  referenceThumbnail; // Downscaled thumbnail for history display
+  final String? referencePath; // OPFS path for reference thumbnail
   final Uint8List drawingPng;
   final String? drawingPath; // when using OPFS
   final int endedAtMs;
@@ -20,22 +25,28 @@ class StoredSession {
   final double overlayDx;
   final double overlayDy;
 
-  const StoredSession({
+  StoredSession({
     required this.id,
     required this.sourceUrl,
     required this.referenceUrl,
+    this.driveFileId,
+    Uint8List? referenceThumbnail,
+    this.referencePath,
     required this.drawingPng,
     this.drawingPath,
     required this.endedAtMs,
     required this.overlayScale,
     required this.overlayDx,
     required this.overlayDy,
-  });
+  }) : referenceThumbnail = referenceThumbnail ?? Uint8List(0);
 
   Map<String, Object?> toMap() => {
     'id': id,
     'sourceUrl': sourceUrl,
     'referenceUrl': referenceUrl,
+    'driveFileId': driveFileId,
+    'referenceThumbnail': referenceThumbnail,
+    'referencePath': referencePath,
     'drawingPng': drawingPng,
     'drawingPath': drawingPath,
     'endedAtMs': endedAtMs,
@@ -48,6 +59,11 @@ class StoredSession {
     id: map['id'] as String,
     sourceUrl: map['sourceUrl'] as String,
     referenceUrl: map['referenceUrl'] as String?,
+    driveFileId: map['driveFileId'] as String?,
+    referenceThumbnail: (map['referenceThumbnail'] is Uint8List)
+        ? map['referenceThumbnail'] as Uint8List
+        : Uint8List(0),
+    referencePath: map['referencePath'] as String?,
     drawingPng: (map['drawingPng'] is Uint8List)
         ? map['drawingPng'] as Uint8List
         : Uint8List(0),
@@ -74,11 +90,17 @@ class SessionCodec {
     String id,
     Uint8List drawingPng, {
     String? drawingPath,
+    String? driveFileId,
+    Uint8List? referenceThumbnail,
+    String? referencePath,
   }) async {
     return StoredSession(
       id: id,
       sourceUrl: s.sourceUrl,
       referenceUrl: s.referenceUrl,
+      driveFileId: driveFileId,
+      referenceThumbnail: referenceThumbnail,
+      referencePath: referencePath,
       drawingPng: drawingPng,
       drawingPath: drawingPath,
       endedAtMs: s.endedAt.millisecondsSinceEpoch,
@@ -108,6 +130,7 @@ class SessionCodec {
           sourceUrl: ss.sourceUrl,
           reference: null,
           referenceUrl: ss.referenceUrl,
+          driveFileId: ss.driveFileId,
           drawing: img,
           endedAt: DateTime.fromMillisecondsSinceEpoch(ss.endedAtMs),
           overlay: OverlayTransform(
@@ -119,10 +142,25 @@ class SessionCodec {
     }
     final drawImage = await _decodeUiImage(bytes);
 
+    // Load reference thumbnail if available
+    ui.Image? refThumb;
+    if (ss.referencePath != null) {
+      // Try to load from OPFS first
+      final store = createBinaryStore();
+      final refBytes = await store.read(ss.referencePath!);
+      if (refBytes != null && refBytes.isNotEmpty) {
+        refThumb = await _decodeUiImage(refBytes);
+      }
+    } else if (ss.referenceThumbnail.isNotEmpty) {
+      // Fallback to inline bytes
+      refThumb = await _decodeUiImage(ss.referenceThumbnail);
+    }
+
     return PracticeSession(
       sourceUrl: ss.sourceUrl,
-      reference: null, // decoded reference not persisted on web
+      reference: refThumb, // Use thumbnail for history display
       referenceUrl: ss.referenceUrl,
+      driveFileId: ss.driveFileId,
       drawing: drawImage,
       endedAt: DateTime.fromMillisecondsSinceEpoch(ss.endedAtMs),
       overlay: OverlayTransform(

@@ -31,6 +31,9 @@ class PracticeSession {
   /// The reference URL (used on web when decoding wasn't possible).
   final String? referenceUrl;
 
+  /// Google Drive file ID for re-downloading full resolution image on-demand.
+  final String? driveFileId;
+
   /// The final drawing committed when the user finished the practice.
   final ui.Image drawing;
 
@@ -43,6 +46,7 @@ class PracticeSession {
     required this.sourceUrl,
     required this.reference,
     required this.referenceUrl,
+    this.driveFileId,
     required this.drawing,
     required this.endedAt,
     required this.overlay,
@@ -52,6 +56,7 @@ class PracticeSession {
     String? sourceUrl,
     ui.Image? reference,
     String? referenceUrl,
+    String? driveFileId,
     ui.Image? drawing,
     DateTime? endedAt,
     OverlayTransform? overlay,
@@ -59,6 +64,7 @@ class PracticeSession {
     sourceUrl: sourceUrl ?? this.sourceUrl,
     reference: reference ?? this.reference,
     referenceUrl: referenceUrl ?? this.referenceUrl,
+    driveFileId: driveFileId ?? this.driveFileId,
     drawing: drawing ?? this.drawing,
     endedAt: endedAt ?? this.endedAt,
     overlay: overlay ?? this.overlay,

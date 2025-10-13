@@ -1,29 +1,44 @@
-// screens/folder_select_screen.dart
-// ---------------------------------
-// WHY: Allow users to select from local folder collections for practice sessions.
+// screens/folder_select_screen_drive.dart
+// ----------------------------------------
+// WHY: Allow users to select from their Google Drive folders for practice sessions.
 // Images are uniformly sampled from all selected folders (including subfolders).
-// This mode enables offline practice or using personal reference libraries.
+// OAuth tokens persist across sessions, eliminating re-authentication on reload.
 //
 // CURRENT SCOPE:
-// - Placeholder fake folders for testing layout and visuals.
-// - Grid display with content preview thumbnails.
-// - Multi-select folders before starting session.
-// - Folder management (add/remove folders) deferred until UI is stable.
+// - OAuth2 authentication with Google Drive
+// - Browse and select folders from Drive root
+// - Display preview thumbnails from folder contents
+// - Multi-select folders before starting session
+// - Persistent folder selections via Hive
+//
+// ADVANTAGES:
+// - Works on iOS Safari (no File System API needed)
+// - No re-selection required on app reload
+// - Built-in thumbnails from Drive API
+// - Cross-device folder access
 //
 // FUTURE:
-// - Platform file picker integration for adding real folders.
-// - Persist folder list to local storage.
-// - Display folder stats (image count, last used).
-// - Filter by subfolder or tag metadata.
+// - Navigate into subfolders (breadcrumb navigation)
+// - Search folders by name
+// - Sort by name/date/size
+// - Folder statistics (total images, last modified)
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:math' as math;
+import 'package:provider/provider.dart';
+import 'dart:ui' as ui;
+import '../services/google_drive_folder_service.dart';
+import '../services/session_service.dart';
+import '../services/debug_logger.dart';
+import '../models/practice_result.dart';
+import '../models/review_result.dart';
+import '../models/practice_session.dart';
 import 'history_screen.dart';
 import 'debug_settings_screen.dart';
-import '../services/debug_logger.dart';
+import 'practice_screen.dart';
+import 'review_screen.dart';
 
-/// Screen for selecting folders to sample images from for practice.
+/// Screen for selecting Google Drive folders to sample images from.
 class FolderSelectScreen extends StatefulWidget {
   const FolderSelectScreen({super.key});
 
@@ -38,82 +53,6 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
   bool _unlimited = false;
   final _secondsController = TextEditingController(text: '60');
 
-  // Placeholder fake folders for testing layout
-  final List<FolderInfo> _folders = [
-    FolderInfo(
-      id: '1',
-      name: 'Anatomy Studies',
-      path: '/Users/me/Pictures/Anatomy',
-      imageCount: 342,
-      previewUrls: [
-        'https://picsum.photos/seed/anat1/300/300',
-        'https://picsum.photos/seed/anat2/300/300',
-        'https://picsum.photos/seed/anat3/300/300',
-        'https://picsum.photos/seed/anat4/300/300',
-      ],
-    ),
-    FolderInfo(
-      id: '2',
-      name: 'Figure Drawing',
-      path: '/Users/me/Pictures/Figures',
-      imageCount: 157,
-      previewUrls: [
-        'https://picsum.photos/seed/fig1/300/300',
-        'https://picsum.photos/seed/fig2/300/300',
-        'https://picsum.photos/seed/fig3/300/300',
-        'https://picsum.photos/seed/fig4/300/300',
-      ],
-    ),
-    FolderInfo(
-      id: '3',
-      name: 'Animals',
-      path: '/Users/me/Pictures/Animals',
-      imageCount: 89,
-      previewUrls: [
-        'https://picsum.photos/seed/animal1/300/300',
-        'https://picsum.photos/seed/animal2/300/300',
-        'https://picsum.photos/seed/animal3/300/300',
-        'https://picsum.photos/seed/animal4/300/300',
-      ],
-    ),
-    FolderInfo(
-      id: '4',
-      name: 'Gestures',
-      path: '/Users/me/Pictures/Gestures',
-      imageCount: 423,
-      previewUrls: [
-        'https://picsum.photos/seed/gest1/300/300',
-        'https://picsum.photos/seed/gest2/300/300',
-        'https://picsum.photos/seed/gest3/300/300',
-        'https://picsum.photos/seed/gest4/300/300',
-      ],
-    ),
-    FolderInfo(
-      id: '5',
-      name: 'Hands & Feet',
-      path: '/Users/me/Pictures/Extremities',
-      imageCount: 234,
-      previewUrls: [
-        'https://picsum.photos/seed/hand1/300/300',
-        'https://picsum.photos/seed/hand2/300/300',
-        'https://picsum.photos/seed/hand3/300/300',
-        'https://picsum.photos/seed/hand4/300/300',
-      ],
-    ),
-    FolderInfo(
-      id: '6',
-      name: 'Portrait Reference',
-      path: '/Users/me/Pictures/Portraits',
-      imageCount: 198,
-      previewUrls: [
-        'https://picsum.photos/seed/port1/300/300',
-        'https://picsum.photos/seed/port2/300/300',
-        'https://picsum.photos/seed/port3/300/300',
-        'https://picsum.photos/seed/port4/300/300',
-      ],
-    ),
-  ];
-
   final Set<String> _selectedIds = {};
 
   @override
@@ -124,106 +63,255 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final selectedCount = _selectedIds.length;
-    final totalImages = _folders
-        .where((f) => _selectedIds.contains(f.id))
-        .fold(0, (sum, f) => sum + f.imageCount);
+    return Consumer<GoogleDriveFolderService>(
+      builder: (context, driveService, child) {
+        final folders = driveService.folders;
+        final selectedCount = _selectedIds.length;
+        final totalImages = folders
+            .where((f) => _selectedIds.contains(f.id))
+            .fold(0, (sum, f) => sum + f.imageCount);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Select Folders'),
-        actions: [
-          if (_selectedIds.isNotEmpty)
-            TextButton(
-              onPressed: () => setState(() => _selectedIds.clear()),
-              child: Text('Clear ($selectedCount)'),
-            ),
-          IconButton(
-            tooltip: 'History',
-            icon: const Icon(Icons.history),
-            onPressed: () {
-              Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => const HistoryScreen()));
-            },
-          ),
-          IconButton(
-            tooltip: 'Debug Settings',
-            icon: const Icon(Icons.bug_report),
-            onPressed: () {
-              infoLog('Opening debug settings', tag: 'FolderSelect');
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const DebugSettingsScreen()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Instructions and stats header
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Select one or more folders to practice from',
-                  style: Theme.of(context).textTheme.titleMedium,
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Select Folders'),
+            actions: [
+              if (_selectedIds.isNotEmpty)
+                TextButton(
+                  onPressed: () => setState(() => _selectedIds.clear()),
+                  child: Text('Clear ($selectedCount)'),
                 ),
-                const SizedBox(height: 8),
-                if (_selectedIds.isNotEmpty)
-                  Text(
-                    '$selectedCount folder${selectedCount == 1 ? '' : 's'} selected · $totalImages image${totalImages == 1 ? '' : 's'} available',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-          // Folder grid
-          Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 300,
-                childAspectRatio: 0.85,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
+              // Add folder button
+              if (driveService.isAuthenticated)
+                IconButton(
+                  tooltip: 'Add Folder',
+                  icon: const Icon(Icons.create_new_folder),
+                  onPressed: () => _showAddFolderDialog(context, driveService),
+                ),
+              IconButton(
+                tooltip: 'History',
+                icon: const Icon(Icons.history),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const HistoryScreen()),
+                  );
+                },
               ),
-              itemCount: _folders.length,
-              itemBuilder: (context, index) {
-                final folder = _folders[index];
-                final selected = _selectedIds.contains(folder.id);
-                return _FolderCard(
-                  folder: folder,
-                  selected: selected,
-                  onToggle: () {
-                    setState(() {
-                      if (selected) {
-                        _selectedIds.remove(folder.id);
-                      } else {
-                        _selectedIds.add(folder.id);
-                      }
-                    });
+              IconButton(
+                tooltip: 'Debug Settings',
+                icon: const Icon(Icons.bug_report),
+                onPressed: () {
+                  infoLog('Opening debug settings', tag: 'FolderSelect');
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const DebugSettingsScreen(),
+                    ),
+                  );
+                },
+              ),
+              // Account menu
+              if (driveService.isAuthenticated)
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.account_circle),
+                  onSelected: (value) {
+                    if (value == 'signout') {
+                      _handleSignOut(context, driveService);
+                    } else if (value == 'clear') {
+                      _handleClearFolders(context, driveService);
+                    }
                   },
-                );
-              },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'clear',
+                      child: Text('Clear All Folders'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'signout',
+                      child: Text('Sign Out'),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          body: Column(
+            children: [
+              // Authentication status / instructions
+              if (!driveService.isAuthenticated)
+                _buildAuthPrompt(context, driveService)
+              else if (folders.isEmpty)
+                _buildEmptyState(context)
+              else
+                _buildFolderInstructions(context, selectedCount, totalImages),
+
+              // Folder grid
+              Expanded(child: _buildFolderGrid(context, driveService, folders)),
+
+              // Bottom controls
+              if (_selectedIds.isNotEmpty && driveService.isAuthenticated)
+                _buildBottomControls(context, totalImages, driveService),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Builds authentication prompt for non-authenticated users.
+  Widget _buildAuthPrompt(
+    BuildContext context,
+    GoogleDriveFolderService service,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(24.0),
+      margin: const EdgeInsets.all(16.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.cloud,
+            size: 64,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Connect to Google Drive',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Access your folders on any device. Your selections persist across sessions.',
+            style: Theme.of(context).textTheme.bodyMedium,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: service.isAuthenticating
+                ? null
+                : () => _handleAuthentication(context, service),
+            icon: service.isAuthenticating
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.login),
+            label: Text(
+              service.isAuthenticating
+                  ? 'Connecting...'
+                  : 'Sign In with Google',
             ),
           ),
-
-          // Bottom controls
-          if (_selectedIds.isNotEmpty)
-            _buildBottomControls(context, totalImages),
         ],
       ),
     );
   }
 
+  /// Builds empty state when authenticated but no folders added.
+  Widget _buildEmptyState(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(24.0),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.folder_open,
+              size: 64,
+              color: Theme.of(context).colorScheme.secondary,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No folders added yet',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tap the folder icon in the app bar to browse your Drive',
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Builds folder selection instructions and stats.
+  Widget _buildFolderInstructions(
+    BuildContext context,
+    int selectedCount,
+    int totalImages,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Select one or more folders to practice from',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          if (selectedCount > 0)
+            Text(
+              '$selectedCount folder${selectedCount == 1 ? '' : 's'} selected · $totalImages image${totalImages == 1 ? '' : 's'} available',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Builds the folder grid.
+  Widget _buildFolderGrid(
+    BuildContext context,
+    GoogleDriveFolderService service,
+    List<DriveFolderInfo> folders,
+  ) {
+    if (!service.isAuthenticated) {
+      return const SizedBox.shrink();
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 300,
+        childAspectRatio: 0.85,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+      ),
+      itemCount: folders.length,
+      itemBuilder: (context, index) {
+        final folder = folders[index];
+        final selected = _selectedIds.contains(folder.id);
+        return _FolderCard(
+          folder: folder,
+          selected: selected,
+          onToggle: () {
+            setState(() {
+              if (selected) {
+                _selectedIds.remove(folder.id);
+              } else {
+                _selectedIds.add(folder.id);
+              }
+            });
+          },
+          onRemove: () => _handleRemoveFolder(context, service, folder),
+        );
+      },
+    );
+  }
+
   /// Builds the bottom control bar with session settings and start button.
-  Widget _buildBottomControls(BuildContext context, int totalImages) {
+  Widget _buildBottomControls(
+    BuildContext context,
+    int totalImages,
+    GoogleDriveFolderService service,
+  ) {
     final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.all(16.0),
@@ -350,37 +438,31 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
             // Unlimited toggle
             Row(
               children: [
-                Text('Unlimited', style: theme.textTheme.labelMedium),
-                const SizedBox(width: 8),
-                Switch.adaptive(
+                Checkbox(
                   value: _unlimited,
-                  onChanged: (v) => setState(() => _unlimited = v),
+                  onChanged: (v) => setState(() {
+                    _unlimited = v ?? false;
+                  }),
                 ),
-                const Spacer(),
+                const Text('Unlimited time'),
               ],
             ),
-            const SizedBox(height: 16),
-            // Start button
-            FilledButton.icon(
-              onPressed: () {
-                infoLog(
-                  'Starting folder session: ${_selectedIds.length} folders, '
-                  'count=$_count, ${_unlimited ? 'unlimited' : '${_seconds}s'}',
-                  tag: 'FolderSelect',
-                );
-                // TODO: Navigate to session runner with folder-based image source
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Folder sessions not yet implemented. Coming soon!',
+            const SizedBox(height: 12),
+            // Start session button
+            FilledButton(
+              onPressed: () => _startSession(context, service),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.play_arrow),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Start Session ($_count image${_count == 1 ? '' : 's'})',
                     ),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.play_arrow),
-              label: Text('Start Session ($totalImages images)'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(double.infinity, 48),
+                  ],
+                ),
               ),
             ),
           ],
@@ -389,65 +471,373 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     );
   }
 
-  /// Compact utility: small square icon button.
-  Widget _smallIconButton({required IconData icon, VoidCallback? onPressed}) {
-    return SizedBox(
-      width: 36,
-      height: 36,
-      child: IconButton(
-        onPressed: onPressed,
-        padding: EdgeInsets.zero,
-        iconSize: 20,
-        icon: Icon(icon),
-      ),
-    );
-  }
+  /// Handle Google authentication.
+  Future<void> _handleAuthentication(
+    BuildContext context,
+    GoogleDriveFolderService service,
+  ) async {
+    infoLog('Starting authentication', tag: 'FolderSelect');
 
-  /// Compact utility: small tonal text button.
-  Widget _smallTonalButton({required String label, VoidCallback? onPressed}) {
-    return SizedBox(
-      height: 36,
-      child: FilledButton.tonal(
-        onPressed: onPressed,
-        style: ButtonStyle(
-          padding: WidgetStateProperty.all(
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          ),
-          minimumSize: WidgetStateProperty.all(const Size(0, 36)),
+    final success = await service.authenticate();
+
+    if (!mounted) return;
+
+    if (success) {
+      infoLog('Authentication successful', tag: 'FolderSelect');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Connected to Google Drive')),
+      );
+    } else {
+      errorLog('Authentication failed', tag: 'FolderSelect');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to connect. Please try again.'),
+          backgroundColor: Colors.red,
         ),
-        child: Text(label),
+      );
+    }
+  }
+
+  /// Show dialog to add a folder from Drive.
+  Future<void> _showAddFolderDialog(
+    BuildContext context,
+    GoogleDriveFolderService service,
+  ) async {
+    infoLog('Opening add folder dialog', tag: 'FolderSelect');
+
+    // Show loading dialog while fetching folders
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Loading folders...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final driveFolders = await service.listDriveFolders();
+
+    if (!mounted) return;
+    Navigator.of(context).pop(); // Close loading dialog
+
+    if (driveFolders.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No folders found in Drive root')),
+      );
+      return;
+    }
+
+    // Show folder selection dialog
+    final selected = await showDialog<DriveFolderInfo>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Folder'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: driveFolders.length,
+            itemBuilder: (context, index) {
+              final folder = driveFolders[index];
+              return ListTile(
+                leading: const Icon(Icons.folder),
+                title: Text(folder.name),
+                subtitle: folder.modifiedTime != null
+                    ? Text('Modified ${_formatDate(folder.modifiedTime!)}')
+                    : null,
+                onTap: () => Navigator.of(context).pop(folder),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+
+    // Show loading while scanning
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Scanning folder...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final added = await service.addFolder(selected);
+
+    if (!mounted) return;
+    Navigator.of(context).pop(); // Close loading dialog
+
+    if (added) {
+      infoLog('Folder added: ${selected.name}', tag: 'FolderSelect');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Added folder: ${selected.name}')));
+    } else {
+      warningLog(
+        'Folder already exists: ${selected.name}',
+        tag: 'FolderSelect',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Folder ${selected.name} already added')),
+      );
+    }
+  }
+
+  /// Handle removing a folder.
+  Future<void> _handleRemoveFolder(
+    BuildContext context,
+    GoogleDriveFolderService service,
+    DriveFolderInfo folder,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Folder?'),
+        content: Text('Remove "${folder.name}" from your collection?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await service.removeFolder(folder.id);
+      setState(() => _selectedIds.remove(folder.id));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Removed ${folder.name}')));
+      }
+    }
+  }
+
+  /// Handle sign out.
+  Future<void> _handleSignOut(
+    BuildContext context,
+    GoogleDriveFolderService service,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign Out?'),
+        content: const Text(
+          'This will remove access to your Drive folders. Your folder selections will be saved.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await service.signOut();
+      setState(() => _selectedIds.clear());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Signed out from Google Drive')),
+        );
+      }
+    }
+  }
+
+  /// Handle clearing all folders.
+  Future<void> _handleClearFolders(
+    BuildContext context,
+    GoogleDriveFolderService service,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear All Folders?'),
+        content: const Text('This will remove all folder selections.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await service.clearFolders();
+      setState(() => _selectedIds.clear());
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('All folders cleared')));
+      }
+    }
+  }
+
+  /// Start a practice session with selected folders.
+  Future<void> _startSession(
+    BuildContext context,
+    GoogleDriveFolderService service,
+  ) async {
+    if (_selectedIds.isEmpty) return;
+
+    final seconds = _unlimited ? null : _seconds;
+    infoLog(
+      'Starting folder session: ${_selectedIds.length} folders, count=$_count, ${_unlimited ? 'unlimited' : '${seconds}s'}',
+      tag: 'FolderSelect',
+    );
+
+    // Show loading dialog while sampling images
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Preparing session...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Sample images from selected folders
+    final images = await service.sampleImages(_selectedIds.toList(), _count);
+
+    if (!mounted) return;
+    Navigator.of(context).pop(); // Close loading dialog
+
+    if (images.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No images found in selected folders'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    infoLog('Sampled ${images.length} images for session', tag: 'FolderSelect');
+
+    // Navigate to Drive session runner (custom implementation for Drive images)
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _DriveSessionRunnerScreen(
+          images: images,
+          driveService: service,
+          secondsPerImage: seconds,
+        ),
       ),
     );
   }
+
+  Widget _smallIconButton({
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return IconButton(
+      icon: Icon(icon, size: 20),
+      onPressed: onPressed,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      padding: EdgeInsets.zero,
+    );
+  }
+
+  Widget _smallTonalButton({
+    required String label,
+    required VoidCallback? onPressed,
+  }) {
+    return FilledButton.tonal(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Text(label, style: const TextStyle(fontSize: 12)),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final diff = now.difference(date);
+
+    if (diff.inDays == 0) return 'Today';
+    if (diff.inDays == 1) return 'Yesterday';
+    if (diff.inDays < 7) return '${diff.inDays} days ago';
+    if (diff.inDays < 30) return '${(diff.inDays / 7).floor()} weeks ago';
+    if (diff.inDays < 365) return '${(diff.inDays / 30).floor()} months ago';
+    return '${(diff.inDays / 365).floor()} years ago';
+  }
 }
 
-/// Data model for a folder that contains practice images.
-class FolderInfo {
-  final String id;
-  final String name;
-  final String path;
-  final int imageCount;
-  final List<String> previewUrls; // Up to 4 preview image URLs
-
-  FolderInfo({
-    required this.id,
-    required this.name,
-    required this.path,
-    required this.imageCount,
-    required this.previewUrls,
-  });
-}
-
-/// Card widget displaying a folder with preview thumbnails.
+/// Card widget displaying a Drive folder with preview thumbnails.
 class _FolderCard extends StatelessWidget {
-  final FolderInfo folder;
+  final DriveFolderInfo folder;
   final bool selected;
   final VoidCallback onToggle;
+  final VoidCallback onRemove;
 
   const _FolderCard({
     required this.folder,
     required this.selected,
     required this.onToggle,
+    required this.onRemove,
   });
 
   @override
@@ -455,69 +845,90 @@ class _FolderCard extends StatelessWidget {
     final theme = Theme.of(context);
     return Card(
       elevation: selected ? 4 : 1,
-      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: selected
+            ? BorderSide(color: theme.colorScheme.primary, width: 2)
+            : BorderSide.none,
+      ),
       child: InkWell(
         onTap: onToggle,
+        borderRadius: BorderRadius.circular(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Preview grid (2x2 thumbnails)
+            // Preview thumbnails (2x2 grid)
             Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _buildPreviewGrid(),
-                  if (selected)
-                    Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: theme.colorScheme.primary,
-                          width: 3,
-                        ),
-                        color: theme.colorScheme.primary.withValues(
-                          alpha: 0.15,
-                        ),
-                      ),
-                    ),
-                  if (selected)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: CircleAvatar(
-                        radius: 16,
-                        backgroundColor: theme.colorScheme.primary,
-                        child: const Icon(
-                          Icons.check,
-                          size: 20,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                ],
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(12),
+                ),
+                child: _buildPreviewGrid(),
               ),
             ),
-
             // Folder info
             Padding(
               padding: const EdgeInsets.all(12.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    folder.name,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.folder,
+                        size: 16,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          folder.name,
+                          style: theme.textTheme.titleSmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      // Remove button
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 16),
+                        onPressed: onRemove,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 24,
+                          minHeight: 24,
+                        ),
+                        tooltip: 'Remove folder',
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${folder.imageCount} images',
+                    '${folder.imageCount} image${folder.imageCount == 1 ? '' : 's'}',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
+                  if (selected)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            size: 14,
+                            color: theme.colorScheme.primary,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Selected',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -527,31 +938,284 @@ class _FolderCard extends StatelessWidget {
     );
   }
 
-  /// Builds a 2x2 grid of preview thumbnails.
   Widget _buildPreviewGrid() {
+    if (folder.previewUrls.isEmpty) {
+      // No previews - show folder icon
+      return Container(
+        color: Colors.grey[200],
+        child: const Center(
+          child: Icon(Icons.folder_open, size: 48, color: Colors.grey),
+        ),
+      );
+    }
+
+    // Build 2x2 grid of thumbnails
     return GridView.builder(
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        mainAxisSpacing: 1,
         crossAxisSpacing: 1,
+        mainAxisSpacing: 1,
       ),
-      itemCount: math.min(4, folder.previewUrls.length),
+      itemCount: 4,
       itemBuilder: (context, index) {
-        if (index >= folder.previewUrls.length) {
-          return Container(color: Colors.grey[300]);
-        }
-        return Image.network(
-          folder.previewUrls[index],
-          fit: BoxFit.cover,
-          filterQuality: FilterQuality.low,
-          webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-          errorBuilder: (_, __, ___) => Container(
+        if (index < folder.previewUrls.length) {
+          // Google Drive thumbnails require authentication headers
+          // For now, use a placeholder until we implement authenticated image loading
+          return Container(
             color: Colors.grey[300],
-            child: const Icon(Icons.broken_image, color: Colors.grey),
-          ),
-        );
+            child: const Center(
+              child: Icon(Icons.image, size: 32, color: Colors.grey),
+            ),
+          );
+        } else {
+          // Empty cell
+          return Container(color: Colors.grey[200]);
+        }
       },
     );
+  }
+}
+
+/// Custom session runner for Google Drive images.
+/// Downloads and decodes images using authenticated Drive API.
+class _DriveSessionRunnerScreen extends StatefulWidget {
+  final List<DriveImageFile> images;
+  final GoogleDriveFolderService driveService;
+  final int? secondsPerImage;
+
+  const _DriveSessionRunnerScreen({
+    required this.images,
+    required this.driveService,
+    required this.secondsPerImage,
+  });
+
+  @override
+  State<_DriveSessionRunnerScreen> createState() =>
+      _DriveSessionRunnerScreenState();
+}
+
+class _DriveSessionRunnerScreenState extends State<_DriveSessionRunnerScreen> {
+  int _index = 0;
+  bool _loading = true;
+  ui.Image? _currentImage;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCurrentImage();
+  }
+
+  Future<void> _loadCurrentImage() async {
+    if (_index >= widget.images.length) {
+      // Session complete
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const HistoryScreen()),
+      );
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final imageFile = widget.images[_index];
+
+    try {
+      // Download image bytes from Drive
+      final bytes = await widget.driveService.downloadImageBytes(imageFile.id);
+
+      if (bytes == null) {
+        throw Exception('Failed to download image');
+      }
+
+      // Decode bytes to ui.Image
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentImage = frame.image;
+        _loading = false;
+      });
+
+      // Start practice screen
+      _startPractice();
+    } catch (e, stack) {
+      errorLog(
+        'Failed to load Drive image',
+        tag: 'DriveSessionRunner',
+        error: e,
+        stackTrace: stack,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _startPractice() async {
+    if (_currentImage == null) return;
+
+    final imageFile = widget.images[_index];
+    final sourceUrl = 'Google Drive: ${imageFile.name}';
+
+    final practiceResult = await Navigator.of(context).push<PracticeResult>(
+      MaterialPageRoute(
+        builder: (_) => PracticeScreen(
+          reference: _currentImage,
+          referenceUrl: null, // No URL fallback since we have decoded image
+          sourceUrl: sourceUrl,
+          timeLimitSeconds: widget.secondsPerImage,
+          sessionMode: true,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (practiceResult == null) {
+      // User backed out of session
+      Navigator.of(context).pop();
+      return;
+    }
+
+    if (practiceResult.skipped) {
+      // Skip to next image
+      setState(() {
+        _index++;
+        _currentImage = null;
+      });
+      _loadCurrentImage();
+      return;
+    }
+
+    // Show review
+    final drawing = practiceResult.drawing!;
+    final reviewResult = await Navigator.of(context).push<ReviewResult>(
+      MaterialPageRoute(
+        builder: (_) => ReviewScreen(
+          reference: _currentImage,
+          referenceUrl: null,
+          drawing: drawing,
+          sourceUrl: sourceUrl,
+          initialOverlay: const OverlayTransform(
+            scale: 1.0,
+            offset: ui.Offset.zero,
+          ),
+          sessionControls: true,
+          isLast: _index == widget.images.length - 1,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    // Save if requested
+    if (reviewResult != null && reviewResult.save) {
+      final imageFile = widget.images[_index];
+      context.read<SessionService>().add(
+        sourceUrl: sourceUrl,
+        reference: _currentImage,
+        referenceUrl: null,
+        driveFileId:
+            imageFile.id, // Save Drive file ID for re-downloading full image
+        drawing: drawing,
+        overlay: reviewResult.overlay,
+      );
+    }
+
+    // Check if user wants to continue or end session
+    if (reviewResult == null || reviewResult.action == ReviewAction.next) {
+      setState(() {
+        _index++;
+        _currentImage = null;
+      });
+      _loadCurrentImage();
+    } else {
+      // End session -> go to history
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const HistoryScreen()),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Loading image ${_index + 1} of ${widget.images.length}...',
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_error != null) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error, size: 64, color: Colors.red),
+                const SizedBox(height: 16),
+                Text(
+                  'Failed to load image',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 16),
+                    FilledButton(
+                      onPressed: () {
+                        setState(() {
+                          _index++;
+                          _currentImage = null;
+                        });
+                        _loadCurrentImage();
+                      },
+                      child: const Text('Skip'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Should never reach here since practice screen is pushed
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }

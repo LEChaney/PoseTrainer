@@ -91,6 +91,7 @@ class SessionService extends ChangeNotifier {
     required String sourceUrl,
     ui.Image? reference,
     String? referenceUrl,
+    String? driveFileId, // Drive file ID for re-downloading full image later
     required ui.Image drawing,
     OverlayTransform overlay = const OverlayTransform(
       scale: 1.0,
@@ -105,10 +106,22 @@ class SessionService extends ChangeNotifier {
     final png = data!.buffer.asUint8List();
     final historyImage = await _decodeUiImage(png);
 
+    // Create thumbnail for reference image if provided
+    ui.Image? refThumb;
+    Uint8List? refThumbPng;
+    if (reference != null) {
+      refThumb = await _createThumbnail(reference, maxDimension: 256);
+      final refData = await refThumb.toByteData(format: ui.ImageByteFormat.png);
+      refThumbPng = refData!.buffer.asUint8List();
+      // Decode thumbnail for immediate in-memory use
+      refThumb = await _decodeUiImage(refThumbPng);
+    }
+
     final session = PracticeSession(
       sourceUrl: sourceUrl,
-      reference: reference,
+      reference: refThumb, // Use thumbnail in memory
       referenceUrl: referenceUrl,
+      driveFileId: driveFileId, // Include Drive file ID for on-demand loading
       drawing: historyImage,
       endedAt: endedAt,
       overlay: overlay,
@@ -120,32 +133,87 @@ class SessionService extends ChangeNotifier {
       '[Svc] add: id=${endedAt.millisecondsSinceEpoch} inserted historyCount=${_history.length}',
     );
     final id = endedAt.millisecondsSinceEpoch.toString();
-    String? path;
-    Uint8List toPersist = png;
+    String? drawPath;
+    String? refPath;
+    Uint8List drawToPersist = png;
+    Uint8List refToPersist = refThumbPng ?? Uint8List(0);
+
     // Try OPFS (web) or fallback
     final bin = createBinaryStore();
     if (await bin.isAvailable()) {
-      final candidate = 'sessions/$id.png';
+      // Store drawing
+      final drawCandidate = 'sessions/$id.png';
       try {
-        await bin.write(candidate, png);
-        path = candidate;
-        toPersist = Uint8List(0); // do not duplicate in Hive
+        await bin.write(drawCandidate, png);
+        drawPath = drawCandidate;
+        drawToPersist = Uint8List(0); // do not duplicate in Hive
         // ignore: avoid_print
         infoLog(
-          '[Svc] add: wrote binary store $candidate (backend: ${bin.runtimeType})',
+          '[Svc] add: wrote drawing $drawCandidate (backend: ${bin.runtimeType})',
         );
       } catch (_) {
-        // keep Hive bytes if write failed
-        path = null;
+        drawPath = null;
+      }
+
+      // Store reference thumbnail if available
+      if (refThumbPng != null && refThumbPng.isNotEmpty) {
+        final refCandidate = 'sessions/${id}_ref.png';
+        try {
+          await bin.write(refCandidate, refThumbPng);
+          refPath = refCandidate;
+          refToPersist = Uint8List(0); // do not duplicate in Hive
+          // ignore: avoid_print
+          infoLog('[Svc] add: wrote reference thumbnail $refCandidate');
+        } catch (_) {
+          refPath = null;
+        }
       }
     }
+
     final stored = await SessionCodec.toStored(
       session,
       id,
-      toPersist,
-      drawingPath: path,
+      drawToPersist,
+      drawingPath: drawPath,
+      driveFileId: driveFileId,
+      referenceThumbnail: refToPersist,
+      referencePath: refPath,
     );
     await _repo.save(stored);
+  }
+
+  /// Create a downscaled thumbnail of an image.
+  Future<ui.Image> _createThumbnail(
+    ui.Image source, {
+    required int maxDimension,
+  }) async {
+    final width = source.width;
+    final height = source.height;
+
+    // Calculate scale to fit within maxDimension
+    final scale = (width > height)
+        ? maxDimension / width
+        : maxDimension / height;
+
+    // Don't upscale
+    if (scale >= 1.0) return source;
+
+    final newWidth = (width * scale).round();
+    final newHeight = (height * scale).round();
+
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+
+    // Draw scaled image
+    canvas.drawImageRect(
+      source,
+      ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      ui.Rect.fromLTWH(0, 0, newWidth.toDouble(), newHeight.toDouble()),
+      ui.Paint()..filterQuality = ui.FilterQuality.medium,
+    );
+
+    final picture = recorder.endRecording();
+    return await picture.toImage(newWidth, newHeight);
   }
 
   /// Update the most recent session's saved overlay transform (after review adjustments).

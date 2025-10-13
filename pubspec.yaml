@@ -50,6 +50,13 @@ dependencies:
   path_provider: ^2.1.4
   # Sharing files (logs) via platform share sheet
   share_plus: ^10.1.2
+  # Google Drive API for persistent folder access across platforms
+  googleapis: ^13.2.0
+  googleapis_auth: ^1.6.0
+  # Google Sign In (handles new OAuth for web)
+  google_sign_in: ^6.2.2
+  # URL launcher for OAuth flow
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

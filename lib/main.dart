@@ -16,6 +16,7 @@ import 'package:provider/provider.dart';
 import 'services/reference_search_service.dart';
 import 'services/session_service.dart';
 import 'services/session_repository.dart';
+import 'services/google_drive_folder_service.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'services/persistence_util.dart';
 import 'services/debug_logger.dart';
@@ -55,6 +56,9 @@ class PoseTrainerApp extends StatelessWidget {
         Provider<SessionRepository>.value(value: repo),
         ChangeNotifierProvider(create: (_) => ReferenceSearchService()),
         ChangeNotifierProvider(create: (_) => SessionService(repo)..init()),
+        ChangeNotifierProvider(
+          create: (_) => GoogleDriveFolderService()..init(),
+        ),
       ],
       child: MaterialApp(
         title: 'PoseTrainer',
