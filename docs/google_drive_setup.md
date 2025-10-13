@@ -273,6 +273,96 @@ For production apps:
 - Verify Hive boxes are being opened correctly
 - Check browser console for storage errors
 
+### "Can't continue with google.com - Something went wrong" (PC/Desktop)
+
+**Symptom:** Initial Google One Tap popup shows error, then fallback popup works.
+
+**Root Cause:** Google's One Tap sign-in has strict requirements and can fail silently.
+
+**Solutions:**
+1. ✅ **Already Fixed:** The code now cancels One Tap and uses explicit sign-in flow
+2. ✅ **Already Fixed:** Calls `signOut()` immediately after creating GoogleSignIn to dismiss One Tap
+3. Ensure your domain is in authorized JavaScript origins
+4. For local testing, use exact URL: `http://localhost:5000` (not `127.0.0.1`)
+5. Clear browser cookies for Google accounts and retry
+
+**Technical Details:**
+- One Tap triggers automatically when GoogleSignIn instance is created
+- One Tap requires specific HTTPS configurations and fails on localhost
+- The explicit `signIn()` flow is more reliable and shows account picker
+- Code now uses `signOut()` trick to cancel automatic One Tap before calling `signIn()`
+- This ensures users always get the reliable popup-based sign-in
+
+**Why You Still Might See One Tap Briefly:**
+- The One Tap UI may flash briefly before being dismissed
+- This is normal - it will be immediately closed and replaced with the popup
+- If it persists or causes errors, clear browser cache and try again
+
+### "401 Unauthorized" After Successful Login (iPad/Mobile)
+
+**Symptom:** Login appears successful, but first API call returns 401.
+
+**Root Cause:** Auth token not being properly attached to requests or expired immediately.
+
+**Solutions:**
+1. ✅ **Already Fixed:** HTTP client now validates auth headers and recreates client on refresh
+2. ✅ **Already Fixed:** Silent sign-in used for session restoration on web
+3. Check that your redirect URI includes your domain: `https://192.158.1.80.sslip.io:5000`
+4. Ensure you're using a **wildcard domain** or **public DNS** service like sslip.io for LAN access
+
+**For LAN Testing (iPad accessing PC):**
+```
+Authorized JavaScript origins:
+- http://192.158.1.80.sslip.io:5000
+- https://192.158.1.80.sslip.io:5000
+
+Authorized redirect URIs:
+- http://192.158.1.80.sslip.io:5000
+- https://192.158.1.80.sslip.io:5000
+```
+
+**Technical Details:**
+- `account.authHeaders` can return stale tokens
+- HTTP client now calls `authHeaders` on every request (auto-refreshes)
+- Silent sign-in attempt on startup restores session
+- Client recreated after token refresh to ensure fresh auth
+
+### "Request had invalid authentication credentials" Error
+
+**Symptom:** API calls fail with authentication error despite successful login.
+
+**Root Cause:** Token not being included in API requests or token expired.
+
+**Solutions:**
+1. ✅ **Already Fixed:** Auth client now validates headers before sending
+2. ✅ **Already Fixed:** Auto-retry with refresh on 401 errors
+3. Check browser console for detailed error logs
+4. Try signing out and signing back in
+5. Clear Hive storage: Delete IndexedDB data for your app
+
+**Debug Steps:**
+1. Open browser DevTools → Console
+2. Look for logs with `[GoogleSignInAuthClient]` tag
+3. Check if auth headers are being added to requests
+4. Verify `Authorization: Bearer <token>` header exists
+5. Check for token expiry messages
+
+### Session Not Restoring on iPad
+
+**Symptom:** Have to sign in every time app is opened on iPad.
+
+**Solutions:**
+1. ✅ **Already Fixed:** Web uses silent sign-in for restoration
+2. Ensure Safari isn't in Private Browsing mode
+3. Check Safari Settings → Advanced → Website Data (ensure not blocked)
+4. Try adding app to Home Screen (PWA mode) for better persistence
+
+**Technical Details:**
+- Web sessions restored via `signInSilently()` on init
+- IndexedDB used for Hive storage (persists in Safari)
+- Private mode clears storage on close
+- PWA mode has better storage persistence
+
 ## Code References
 
 ### Key Files:

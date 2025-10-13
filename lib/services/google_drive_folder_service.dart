@@ -1,12 +1,19 @@
 // services/google_drive_folder_service.dart
 // -----------------------------------------
 // WHY: Provide persistent folder access across all platforms (especially iOS Safari)
-// using Google Drive API. OAuth tokens survive app reloads, eliminating the need
-// for repeated folder selection.
+// using Google Drive API. Uses modern google_sign_in 7.x authentication pattern.
+//
+// AUTHENTICATION PATTERN:
+// - Follows official google_sign_in example: https://pub.dev/packages/google_sign_in/example
+// - Uses authentication events stream for state management
+// - attemptLightweightAuthentication() for silent sign-in
+// - authenticate() for explicit user sign-in
+// - Scope authorization separate from authentication
+// - extension_google_sign_in_as_googleapis_auth for googleapis integration
 //
 // CURRENT SCOPE:
-// - OAuth2 authentication with refresh token persistence via Hive
-// - List folders in user's Google Drive
+// - OAuth2 authentication with automatic session restoration
+// - List folders in user's Google Drive (including subfolders)
 // - Recursive scanning for image files
 // - Thumbnail URLs for preview grids
 // - Uniform random sampling from selected folders
@@ -14,7 +21,7 @@
 //
 // ADVANTAGES OVER FILE SYSTEM API:
 // - Works on iOS Safari (no File System API support issues)
-// - Persistent access via refresh tokens (no re-selection needed)
+// - Persistent access via automatic token refresh
 // - Built-in thumbnails and metadata
 // - Cross-device folder sync
 //
@@ -26,32 +33,27 @@
 //    - http://localhost (for local testing)
 //    - Your production domain
 // 5. Replace CLIENT_ID below with your credentials
-//
-// FUTURE:
-// - Image caching for offline practice
-// - Folder watching via Drive API webhooks
-// - Shared folder support
 
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
-import 'package:googleapis_auth/auth_io.dart' as auth_io;
 import 'package:google_sign_in/google_sign_in.dart' as gsi;
+import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:hive_ce/hive.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'debug_logger.dart';
 
 /// OAuth client ID - Replace with your own from Google Cloud Console
 /// Get credentials at: https://console.cloud.google.com/apis/credentials
 const String _clientId =
     '318937395146-q45i9v1g547jhg61khqs9v2hivreilup.apps.googleusercontent.com';
-const String _clientSecret = 'YOUR_CLIENT_SECRET'; // Only needed for non-web
 
-/// OAuth scopes - readonly access to Drive
-const List<String> _scopes = [drive.DriveApi.driveReadonlyScope];
+/// Core OAuth scopes required for Drive API operations.
+const List<String> _scopes = [
+  drive.DriveApi.driveReadonlyScope,
+  drive.DriveApi.driveFileScope,
+];
 
 /// Represents a Google Drive folder with metadata and preview thumbnails.
 class DriveFolderInfo {
@@ -146,30 +148,60 @@ class DriveImageFile {
   }
 }
 
-/// Service for managing folders via Google Drive API with persistent OAuth access.
+/// Service for Google Drive folder access using OAuth2.
+///
+/// Uses modern google_sign_in 7.x authentication pattern:
+/// - Authentication events stream for state management
+/// - attemptLightweightAuthentication() for silent sign-in
+/// - authenticate() for explicit user sign-in
+/// - Scope authorization separate from authentication
+///
+/// Reference: https://pub.dev/packages/google_sign_in/example
 class GoogleDriveFolderService extends ChangeNotifier {
   static const String _tag = 'GoogleDriveFolderService';
-  static const String _tokenBoxName = 'google_drive_tokens';
   static const String _foldersBoxName = 'google_drive_folders';
 
+  // --- Member Fields ---
+
+  /// Drive API wrapper instance.
   drive.DriveApi? _driveApi;
+
+  /// HTTP client used to make authenticated requests to the Drive API.
   http.Client? _httpClient;
-  gsi.GoogleSignIn? _googleSignIn; // Keep reference to GoogleSignIn instance
-  bool _isAuthenticated = false;
+
+  /// Google Sign-In instance (unified for all platforms).
+  final gsi.GoogleSignIn _googleSignIn = gsi.GoogleSignIn.instance;
+
+  /// Current authenticated user account.
+  gsi.GoogleSignInAccount? _currentUser;
+
+  /// Subscription to authentication events.
+  StreamSubscription<gsi.GoogleSignInAuthenticationEvent>?
+  _authEventsSubscription;
+
+  /// Whether the service is initialized.
   bool _isInitialized = false;
+
+  /// Whether authentication is in progress.
   bool _isAuthenticating = false;
 
+  /// List of configured folders.
   final List<DriveFolderInfo> _folders = [];
 
-  // Cache of scanned images per folder
+  /// Cache of scanned images per folder.
   final Map<String, List<DriveImageFile>> _imageCache = {};
 
+  // --- Public Getters ---
+
   List<DriveFolderInfo> get folders => List.unmodifiable(_folders);
-  bool get isAuthenticated => _isAuthenticated;
+  bool get isAuthenticated => _currentUser != null;
   bool get isInitialized => _isInitialized;
   bool get isAuthenticating => _isAuthenticating;
 
-  /// Initialize service and attempt to restore previous session.
+  // --- Initialization ---
+
+  /// Initialize service and set up authentication event handling.
+  /// Follows official google_sign_in pattern.
   Future<void> init() async {
     if (_isInitialized) {
       infoLog('GoogleDriveFolderService already initialized', tag: _tag);
@@ -182,13 +214,25 @@ class GoogleDriveFolderService extends ChangeNotifier {
       // Load persisted folders first (even if not authenticated)
       await _loadPersistedFolders();
 
-      // Attempt to restore credentials from storage
-      final restored = await _restoreSession();
-      if (restored) {
-        infoLog('Session restored from storage', tag: _tag);
-      } else {
-        infoLog('No stored session found', tag: _tag);
-      }
+      // Initialize GoogleSignIn with clientId
+      await _googleSignIn.initialize(
+        clientId: _clientId,
+        // Note: serverClientId not needed for web-only apps
+      );
+
+      // Listen to authentication events (modern pattern)
+      _authEventsSubscription = _googleSignIn.authenticationEvents.listen(
+        _handleAuthenticationEvent,
+      )..onError(_handleAuthenticationError);
+
+      // Attempt lightweight (silent) authentication
+      // This will trigger authenticationEvents if user is already signed in
+      infoLog('Attempting lightweight authentication', tag: _tag);
+      _googleSignIn.attemptLightweightAuthentication(reportAllExceptions: true);
+
+      _isInitialized = true;
+      infoLog('GoogleDriveFolderService initialized', tag: _tag);
+      notifyListeners();
     } catch (e, stack) {
       errorLog(
         'Failed to initialize Google Drive service',
@@ -196,14 +240,141 @@ class GoogleDriveFolderService extends ChangeNotifier {
         error: e,
         stackTrace: stack,
       );
+      _isInitialized = true; // Mark as initialized even if auth failed
+      notifyListeners();
     }
-
-    _isInitialized = true;
-    notifyListeners();
   }
 
-  /// Authenticate with Google Drive using OAuth2.
+  /// Handle authentication events from GoogleSignIn.
+  /// This is the modern way to track authentication state.
+  Future<void> _handleAuthenticationEvent(
+    gsi.GoogleSignInAuthenticationEvent event,
+  ) async {
+    infoLog('Authentication event: ${event.runtimeType}', tag: _tag);
+
+    // Extract user from event
+    final user = switch (event) {
+      gsi.GoogleSignInAuthenticationEventSignIn() => event.user,
+      gsi.GoogleSignInAuthenticationEventSignOut() => null,
+    };
+
+    if (user != null) {
+      infoLog('User signed in: ${user.email}', tag: _tag);
+
+      // Check if user has authorized required scopes
+      final authorization = await user.authorizationClient
+          .authorizationForScopes(_scopes);
+
+      if (authorization == null) {
+        // User hasn't authorized scopes yet, request them
+        warningLog('User not authorized for required scopes', tag: _tag);
+        await _requestScopeAuthorization(user);
+      } else {
+        // User is fully authorized, set up API client
+        infoLog('User authorized for required scopes', tag: _tag);
+        await _setupApiClient(user);
+      }
+    } else {
+      infoLog('User signed out', tag: _tag);
+      _currentUser = null;
+      _driveApi = null;
+      _httpClient?.close();
+      _httpClient = null;
+      notifyListeners();
+    }
+  }
+
+  /// Handle authentication errors.
+  void _handleAuthenticationError(Object error, StackTrace stackTrace) {
+    errorLog(
+      'Authentication error',
+      tag: _tag,
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
+  /// Request scope authorization from user.
+  Future<void> _requestScopeAuthorization(gsi.GoogleSignInAccount user) async {
+    try {
+      infoLog('Requesting scope authorization', tag: _tag);
+
+      // Request authorization for required scopes
+      // Returns void (doesn't return boolean)
+      await user.authorizationClient.authorizeScopes(_scopes);
+
+      infoLog('Scope authorization requested', tag: _tag);
+
+      // Set up API client (assume authorization was granted if no exception)
+      await _setupApiClient(user);
+    } catch (e, stack) {
+      errorLog(
+        'Failed to request scope authorization',
+        tag: _tag,
+        error: e,
+        stackTrace: stack,
+      );
+    }
+  }
+
+  /// Set up Drive API client with authenticated user.
+  /// Uses authorizationClient.authClient() from the extension package.
+  Future<void> _setupApiClient(gsi.GoogleSignInAccount user) async {
+    try {
+      _currentUser = user;
+
+      // Get authorization for required scopes
+      final authorization = await user.authorizationClient
+          .authorizationForScopes(_scopes);
+
+      if (authorization == null) {
+        errorLog('No authorization available', tag: _tag);
+        return;
+      }
+
+      // Get authenticated HTTP client from authorization
+      // This uses the extension package's authClient() method
+      final authClient = authorization.authClient(scopes: _scopes);
+      _httpClient = authClient as http.Client;
+
+      // Create Drive API client
+      _driveApi = drive.DriveApi(_httpClient!);
+
+      infoLog('Drive API client set up successfully', tag: _tag);
+      notifyListeners();
+    } catch (e, stack) {
+      errorLog(
+        'Failed to set up API client',
+        tag: _tag,
+        error: e,
+        stackTrace: stack,
+      );
+    }
+  }
+
+  // --- Authentication ---
+
+  /// Check if the platform supports programmatic authenticate() method.
+  /// On web, this returns false - must use renderButton() instead.
+  bool get supportsAuthenticate =>
+      gsi.GoogleSignIn.instance.supportsAuthenticate();
+
+  /// Authenticate with Google Drive using explicit sign-in.
+  ///
+  /// **IMPORTANT**: On web, this throws UnimplementedError.
+  /// For web, use the GoogleSignInButton widget from folder_select_screen.dart
+  /// which calls renderButton() to show Google's sign-in UI.
+  ///
+  /// Shows account picker UI on mobile/desktop platforms.
   Future<bool> authenticate() async {
+    if (!supportsAuthenticate) {
+      errorLog(
+        'authenticate() is not supported on this platform. Use renderButton() on web.',
+        tag: _tag,
+      );
+      return false;
+    }
+
     if (_isAuthenticating) {
       warningLog('Authentication already in progress', tag: _tag);
       return false;
@@ -212,14 +383,25 @@ class GoogleDriveFolderService extends ChangeNotifier {
     _isAuthenticating = true;
     notifyListeners();
 
-    infoLog('Starting Google Drive authentication', tag: _tag);
+    infoLog('Starting explicit Google Drive authentication', tag: _tag);
 
     try {
-      if (kIsWeb) {
-        return await _authenticateWeb();
+      // Use modern authenticate() method which shows account picker
+      // This will trigger authenticationEvents automatically
+      // NOTE: This only works on mobile/desktop, NOT on web
+      await _googleSignIn.authenticate();
+
+      // Wait a bit for authentication event to be processed
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      final success = isAuthenticated;
+      if (success) {
+        infoLog('Authentication successful', tag: _tag);
       } else {
-        return await _authenticateMobile();
+        warningLog('Authentication did not complete', tag: _tag);
       }
+
+      return success;
     } catch (e, stack) {
       errorLog('Authentication failed', tag: _tag, error: e, stackTrace: stack);
       return false;
@@ -229,264 +411,23 @@ class GoogleDriveFolderService extends ChangeNotifier {
     }
   }
 
-  /// Web authentication using browser OAuth flow.
-  Future<bool> _authenticateWeb() async {
-    infoLog('Using Google Sign-In for web authentication', tag: _tag);
+  /// Sign out and clear credentials.
+  Future<void> signOut() async {
+    infoLog('Signing out from Google Drive', tag: _tag);
 
     try {
-      // Use google_sign_in which handles the new Google Identity Services API
-      _googleSignIn = gsi.GoogleSignIn(
-        clientId: _clientId,
-        scopes: _scopes,
-      );
-
-      // Try silent sign-in first (uses existing session if available)
-      var account = await _googleSignIn!.signInSilently();
-
-      // If silent sign-in fails, try regular sign-in
-      if (account == null) {
-        infoLog('Silent sign-in failed, prompting user', tag: _tag);
-        account = await _googleSignIn!.signIn();
-      }
-
-      if (account == null) {
-        warningLog('User cancelled sign-in', tag: _tag);
-        return false;
-      }
-
-      infoLog('User signed in: ${account.email}', tag: _tag);
-
-      // Create authenticated HTTP client using google_sign_in's auth
-      _httpClient = _GoogleSignInAuthClient(_googleSignIn!, http.Client());
-
-      // Create Drive API client
-      _driveApi = drive.DriveApi(_httpClient!);
-      _isAuthenticated = true;
-
-      infoLog('Web authentication successful', tag: _tag);
-      notifyListeners();
-      return true;
+      // Modern sign-out method - triggers SignOut event automatically
+      await _googleSignIn.signOut();
+      infoLog('Signed out successfully', tag: _tag);
     } catch (e, stack) {
-      errorLog(
-        'Web authentication failed',
-        tag: _tag,
-        error: e,
-        stackTrace: stack,
-      );
-      return false;
+      errorLog('Failed to sign out', tag: _tag, error: e, stackTrace: stack);
     }
+
+    // Event handler will clean up _currentUser, _driveApi, _httpClient
+    notifyListeners();
   }
 
-  /// Mobile/desktop authentication using installed app flow.
-  Future<bool> _authenticateMobile() async {
-    infoLog('Using mobile/desktop OAuth flow', tag: _tag);
-
-    try {
-      final id = auth_io.ClientId(_clientId, _clientSecret);
-      final httpClient = http.Client();
-
-      // Obtain credentials via user consent
-      final credentials = await auth_io.obtainAccessCredentialsViaUserConsent(
-        id,
-        _scopes,
-        httpClient,
-        (url) async {
-          // Open browser for user consent
-          infoLog('Opening consent URL: $url', tag: _tag);
-          final uri = Uri.parse(url);
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          } else {
-            errorLog('Cannot launch URL: $url', tag: _tag);
-          }
-        },
-      );
-
-      // Store tokens
-      await _persistCredentials(credentials);
-
-      // Create authenticated client
-      _httpClient = auth_io.authenticatedClient(httpClient, credentials);
-      _driveApi = drive.DriveApi(_httpClient!);
-      _isAuthenticated = true;
-
-      infoLog('Mobile authentication successful', tag: _tag);
-      notifyListeners();
-      return true;
-    } catch (e, stack) {
-      errorLog(
-        'Mobile authentication failed',
-        tag: _tag,
-        error: e,
-        stackTrace: stack,
-      );
-      return false;
-    }
-  }
-
-  /// Attempt to refresh authentication silently when token expires.
-  /// Returns true if refresh succeeded, false if user needs to re-authenticate.
-  Future<bool> _refreshAuthSilently() async {
-    infoLog('Attempting silent token refresh', tag: _tag);
-
-    try {
-      if (kIsWeb && _googleSignIn != null) {
-        // For web, try silent sign-in
-        final account = await _googleSignIn!.signInSilently();
-
-        if (account != null) {
-          infoLog('Silent token refresh successful', tag: _tag);
-          // The _GoogleSignInAuthClient will automatically use the refreshed token
-          return true;
-        } else {
-          warningLog('Silent sign-in returned null account', tag: _tag);
-          return false;
-        }
-      } else {
-        // For mobile/desktop, the authenticatedClient should handle refresh automatically
-        // If we get here, we need to re-authenticate
-        warningLog('Token refresh not available for mobile', tag: _tag);
-        return false;
-      }
-    } catch (e, stack) {
-      errorLog(
-        'Failed to refresh token silently',
-        tag: _tag,
-        error: e,
-        stackTrace: stack,
-      );
-      return false;
-    }
-  }
-
-  /// Wrapper that handles authentication errors and retries with token refresh.
-  Future<T?> _withAuthRetry<T>(Future<T> Function() operation) async {
-    try {
-      return await operation();
-    } catch (e) {
-      // Check if it's an authentication error
-      final errorStr = e.toString();
-      if (errorStr.contains('invalid_token') ||
-          errorStr.contains('Access was denied') ||
-          errorStr.contains('401')) {
-        warningLog(
-          'Authentication error detected, attempting token refresh',
-          tag: _tag,
-        );
-
-        // Try to refresh silently
-        final refreshed = await _refreshAuthSilently();
-
-        if (refreshed) {
-          // Retry the operation with refreshed token
-          infoLog('Retrying operation with refreshed token', tag: _tag);
-          try {
-            return await operation();
-          } catch (retryError) {
-            errorLog(
-              'Operation failed after token refresh',
-              tag: _tag,
-              error: retryError,
-            );
-            rethrow;
-          }
-        } else {
-          // Need full re-authentication
-          errorLog(
-            'Token refresh failed, user needs to re-authenticate',
-            tag: _tag,
-          );
-          _isAuthenticated = false;
-          notifyListeners();
-          rethrow;
-        }
-      } else {
-        // Not an auth error, just rethrow
-        rethrow;
-      }
-    }
-  }
-
-  /// Persist OAuth credentials to Hive for session restoration.
-  Future<void> _persistCredentials(
-    auth_io.AccessCredentials credentials,
-  ) async {
-    try {
-      final box = await Hive.openBox<dynamic>(_tokenBoxName);
-      await box.put('access_token', credentials.accessToken.data);
-      await box.put('token_type', credentials.accessToken.type);
-      await box.put('expiry', credentials.accessToken.expiry.toIso8601String());
-
-      if (credentials.refreshToken != null) {
-        await box.put('refresh_token', credentials.refreshToken);
-        infoLog('Refresh token stored', tag: _tag);
-      }
-
-      await box.put('scopes', credentials.scopes);
-
-      infoLog('Credentials persisted to storage', tag: _tag);
-    } catch (e, stack) {
-      errorLog(
-        'Failed to persist credentials',
-        tag: _tag,
-        error: e,
-        stackTrace: stack,
-      );
-    }
-  }
-
-  /// Restore OAuth session from Hive storage.
-  Future<bool> _restoreSession() async {
-    try {
-      final box = await Hive.openBox<dynamic>(_tokenBoxName);
-
-      final accessTokenData = box.get('access_token') as String?;
-      final tokenType = box.get('token_type') as String?;
-      final expiryStr = box.get('expiry') as String?;
-      final refreshToken = box.get('refresh_token') as String?;
-      final scopes = (box.get('scopes') as List<dynamic>?)?.cast<String>();
-
-      if (accessTokenData == null || tokenType == null || expiryStr == null) {
-        debugLog('No stored credentials found', tag: _tag);
-        return false;
-      }
-
-      final accessToken = auth_io.AccessToken(
-        tokenType,
-        accessTokenData,
-        DateTime.parse(expiryStr),
-      );
-
-      final credentials = auth_io.AccessCredentials(
-        accessToken,
-        refreshToken,
-        scopes ?? _scopes,
-      );
-
-      // Create authenticated client
-      final httpClient = http.Client();
-      _httpClient = auth_io.authenticatedClient(httpClient, credentials);
-      _driveApi = drive.DriveApi(_httpClient!);
-      _isAuthenticated = true;
-
-      infoLog('Session restored successfully', tag: _tag);
-      notifyListeners();
-      return true;
-    } catch (e, stack) {
-      errorLog(
-        'Failed to restore session',
-        tag: _tag,
-        error: e,
-        stackTrace: stack,
-      );
-      // Clear invalid tokens
-      try {
-        final box = await Hive.openBox<dynamic>(_tokenBoxName);
-        await box.clear();
-      } catch (_) {}
-      return false;
-    }
-  }
+  // --- Folder Management ---
 
   /// Load persisted folder metadata from Hive.
   Future<void> _loadPersistedFolders() async {
@@ -537,44 +478,43 @@ class GoogleDriveFolderService extends ChangeNotifier {
   }
 
   /// List all folders in user's Google Drive root.
-  Future<List<DriveFolderInfo>> listDriveFolders() async {
+  /// If parentId is provided, lists folders in that folder instead.
+  Future<List<DriveFolderInfo>> listDriveFolders({String? parentId}) async {
     if (_driveApi == null) {
       warningLog('Cannot list folders: not authenticated', tag: _tag);
       return [];
     }
 
-    infoLog('Listing Google Drive folders', tag: _tag);
+    final location = parentId ?? 'root';
+    infoLog('Listing Google Drive folders in: $location', tag: _tag);
 
     try {
-      // Use auth retry wrapper to handle token expiration
-      final result = await _withAuthRetry<List<DriveFolderInfo>>(() async {
-        // Query for folders only (not in trash, in root)
-        final query =
-            "mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents";
-        final fileList = await _driveApi!.files.list(
-          q: query,
-          spaces: 'drive',
-          orderBy: 'name',
-          pageSize: 1000, // Get up to 1000 folders
-          $fields: 'files(id, name, parents, modifiedTime)',
-        );
+      // Query for folders only (not in trash, in specified parent)
+      final query = parentId == null
+          ? "mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents"
+          : "mimeType='application/vnd.google-apps.folder' and trashed=false and '$parentId' in parents";
 
-        final folders =
-            fileList.files?.map((file) {
-              return DriveFolderInfo(
-                id: file.id!,
-                name: file.name!,
-                parentId: file.parents?.firstOrNull,
-                modifiedTime: file.modifiedTime,
-              );
-            }).toList() ??
-            [];
+      final fileList = await _driveApi!.files.list(
+        q: query,
+        spaces: 'drive',
+        orderBy: 'name',
+        pageSize: 1000, // Get up to 1000 folders
+        $fields: 'files(id, name, parents, modifiedTime)',
+      );
 
-        infoLog('Found ${folders.length} folders in Drive root', tag: _tag);
-        return folders;
-      });
+      final folders =
+          fileList.files?.map((file) {
+            return DriveFolderInfo(
+              id: file.id!,
+              name: file.name!,
+              parentId: file.parents?.firstOrNull,
+              modifiedTime: file.modifiedTime,
+            );
+          }).toList() ??
+          [];
 
-      return result ?? [];
+      infoLog('Found ${folders.length} folders in $location', tag: _tag);
+      return folders;
     } catch (e, stack) {
       errorLog(
         'Failed to list Drive folders',
@@ -634,6 +574,17 @@ class GoogleDriveFolderService extends ChangeNotifier {
     }
   }
 
+  /// Clear all folders (but keep authentication).
+  Future<void> clearFolders() async {
+    infoLog('Clearing all folders', tag: _tag);
+    _folders.clear();
+    _imageCache.clear();
+    await _persistFolders();
+    notifyListeners();
+  }
+
+  // --- Image Scanning ---
+
   /// Scan a folder recursively for image files.
   Future<List<DriveImageFile>> scanFolder(String folderId) async {
     if (_driveApi == null) {
@@ -676,19 +627,14 @@ class GoogleDriveFolderService extends ChangeNotifier {
     int entryCount = 0;
 
     do {
-      // Use auth retry wrapper
-      final fileList = await _withAuthRetry<drive.FileList>(() async {
-        return await _driveApi!.files.list(
-          q: query,
-          spaces: 'drive',
-          pageSize: 1000,
-          pageToken: pageToken,
-          $fields:
-              'nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, size, parents)',
-        );
-      });
-
-      if (fileList == null) break;
+      final fileList = await _driveApi!.files.list(
+        q: query,
+        spaces: 'drive',
+        pageSize: 1000,
+        pageToken: pageToken,
+        $fields:
+            'nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, size, parents)',
+      );
 
       for (final file in fileList.files ?? []) {
         entryCount++;
@@ -758,6 +704,8 @@ class GoogleDriveFolderService extends ChangeNotifier {
     return sampled;
   }
 
+  // --- Image Download ---
+
   /// Download image file bytes from Drive using authenticated client.
   /// Returns null if download fails.
   Future<Uint8List?> downloadImageBytes(String fileId) async {
@@ -769,30 +717,25 @@ class GoogleDriveFolderService extends ChangeNotifier {
     try {
       infoLog('Downloading image: $fileId', tag: _tag);
 
-      // Use auth retry wrapper to handle token expiration
-      final bytes = await _withAuthRetry<Uint8List>(() async {
-        // Use Drive API to get file content
-        // The alt=media parameter tells Drive to return file content instead of metadata
-        final media =
-            await _driveApi!.files.get(
-                  fileId,
-                  downloadOptions: drive.DownloadOptions.fullMedia,
-                )
-                as drive.Media;
+      // Use Drive API to get file content
+      // The alt=media parameter tells Drive to return file content instead of metadata
+      final media =
+          await _driveApi!.files.get(
+                fileId,
+                downloadOptions: drive.DownloadOptions.fullMedia,
+              )
+              as drive.Media;
 
-        // Read the stream into a byte list
-        final chunks = <List<int>>[];
-        await for (final chunk in media.stream) {
-          chunks.add(chunk);
-        }
-
-        // Combine all chunks
-        return Uint8List.fromList(chunks.expand((c) => c).toList());
-      });
-
-      if (bytes != null) {
-        infoLog('Downloaded ${bytes.length} bytes for $fileId', tag: _tag);
+      // Read the stream into a byte list
+      final chunks = <List<int>>[];
+      await for (final chunk in media.stream) {
+        chunks.add(chunk);
       }
+
+      // Combine all chunks
+      final bytes = Uint8List.fromList(chunks.expand((c) => c).toList());
+
+      infoLog('Downloaded ${bytes.length} bytes for $fileId', tag: _tag);
       return bytes;
     } catch (e, stack) {
       errorLog(
@@ -805,86 +748,12 @@ class GoogleDriveFolderService extends ChangeNotifier {
     }
   }
 
-  /// Sign out and clear credentials.
-  Future<void> signOut() async {
-    infoLog('Signing out from Google Drive', tag: _tag);
-
-    // Sign out from GoogleSignIn if on web
-    if (_googleSignIn != null) {
-      try {
-        await _googleSignIn!.signOut();
-        infoLog('Signed out from GoogleSignIn', tag: _tag);
-      } catch (e) {
-        warningLog('Failed to sign out from GoogleSignIn: $e', tag: _tag);
-      }
-      _googleSignIn = null;
-    }
-
-    _driveApi = null;
-    _httpClient?.close();
-    _httpClient = null;
-    _isAuthenticated = false;
-    _imageCache.clear();
-
-    // Clear persisted credentials
-    try {
-      final tokenBox = await Hive.openBox<dynamic>(_tokenBoxName);
-      await tokenBox.clear();
-      infoLog('Credentials cleared from storage', tag: _tag);
-    } catch (e, stack) {
-      errorLog(
-        'Failed to clear credentials',
-        tag: _tag,
-        error: e,
-        stackTrace: stack,
-      );
-    }
-
-    notifyListeners();
-  }
-
-  /// Clear all folders (but keep authentication).
-  Future<void> clearFolders() async {
-    infoLog('Clearing all folders', tag: _tag);
-    _folders.clear();
-    _imageCache.clear();
-    await _persistFolders();
-    notifyListeners();
-  }
+  // --- Cleanup ---
 
   @override
   void dispose() {
+    _authEventsSubscription?.cancel();
     _httpClient?.close();
     super.dispose();
-  }
-}
-
-/// Custom HTTP client that uses google_sign_in authentication.
-/// This bridges google_sign_in with googleapis by providing auth headers.
-class _GoogleSignInAuthClient extends http.BaseClient {
-  final gsi.GoogleSignIn _googleSignIn;
-  final http.Client _baseClient;
-
-  _GoogleSignInAuthClient(this._googleSignIn, this._baseClient);
-
-  @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    // Get current account
-    final account = _googleSignIn.currentUser;
-
-    if (account == null) {
-      throw Exception('No authenticated user');
-    }
-
-    // Get auth headers and add to request
-    final authHeaders = await account.authHeaders;
-    request.headers.addAll(authHeaders);
-
-    return _baseClient.send(request);
-  }
-
-  @override
-  void close() {
-    _baseClient.close();
   }
 }

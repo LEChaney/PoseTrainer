@@ -34,7 +34,7 @@ dependencies:
   # State management
   provider: ^6.0.5
   # Local persistence (IndexedDB on Web, files on mobile/desktop) - WASM-compatible community fork
-  hive_ce: ^2.13.2
+  hive_ce: ^2.14.0
   hive_ce_flutter: ^2.3.2
   # Modern web API access (WASM-compatible OPFS implementation)
   web: ^1.1.0
@@ -49,12 +49,13 @@ dependencies:
   # File system path access for logging
   path_provider: ^2.1.4
   # Sharing files (logs) via platform share sheet
-  share_plus: ^10.1.2
+  share_plus: ^12.0.0
   # Google Drive API for persistent folder access across platforms
-  googleapis: ^13.2.0
-  googleapis_auth: ^1.6.0
+  googleapis: ^15.0.0
   # Google Sign In (handles new OAuth for web)
-  google_sign_in: ^6.2.2
+  google_sign_in: ^7.2.0
+  google_sign_in_web: ^1.1.0
+  extension_google_sign_in_as_googleapis_auth: ^3.0.0
   # URL launcher for OAuth flow
   url_launcher: ^6.3.1
 

@@ -8,6 +8,23 @@
     ],
     "headers": [
       {
+        "source": "**",
+        "headers": [
+          { 
+            "key": "Cross-Origin-Opener-Policy", 
+            "value": "same-origin-allow-popups" 
+          },
+          { 
+            "key": "Cross-Origin-Embedder-Policy", 
+            "value": "require-corp" 
+          },
+          { 
+            "key": "Referrer-Policy", 
+            "value": "no-referrer-when-downgrade" 
+          }
+        ]
+      },
+      {
         "source": "**/*.@(js|css)",
         "headers": [
           { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }

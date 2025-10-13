@@ -27,12 +27,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
+import 'dart:async';
 import '../services/google_drive_folder_service.dart';
 import '../services/session_service.dart';
 import '../services/debug_logger.dart';
 import '../models/practice_result.dart';
 import '../models/review_result.dart';
 import '../models/practice_session.dart';
+import '../widgets/google_sign_in_button.dart';
 import 'history_screen.dart';
 import 'debug_settings_screen.dart';
 import 'practice_screen.dart';
@@ -186,23 +189,7 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: service.isAuthenticating
-                ? null
-                : () => _handleAuthentication(context, service),
-            icon: service.isAuthenticating
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.login),
-            label: Text(
-              service.isAuthenticating
-                  ? 'Connecting...'
-                  : 'Sign In with Google',
-            ),
-          ),
+          GoogleSignInButton(service: service),
         ],
       ),
     );
@@ -471,33 +458,6 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     );
   }
 
-  /// Handle Google authentication.
-  Future<void> _handleAuthentication(
-    BuildContext context,
-    GoogleDriveFolderService service,
-  ) async {
-    infoLog('Starting authentication', tag: 'FolderSelect');
-
-    final success = await service.authenticate();
-
-    if (!mounted) return;
-
-    if (success) {
-      infoLog('Authentication successful', tag: 'FolderSelect');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Connected to Google Drive')),
-      );
-    } else {
-      errorLog('Authentication failed', tag: 'FolderSelect');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to connect. Please try again.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
   /// Show dialog to add a folder from Drive.
   Future<void> _showAddFolderDialog(
     BuildContext context,
@@ -505,87 +465,14 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
   ) async {
     infoLog('Opening add folder dialog', tag: 'FolderSelect');
 
-    // Show loading dialog while fetching folders
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Loading folders...'),
-              ],
-            ),
-          ),
-        ),
+    // Navigate to folder browser screen
+    final selected = await Navigator.of(context).push<List<DriveFolderInfo>>(
+      MaterialPageRoute(
+        builder: (_) => _DriveFolderBrowserScreen(service: service),
       ),
     );
 
-    final driveFolders = await service.listDriveFolders();
-
-    if (!mounted) return;
-    Navigator.of(context).pop(); // Close loading dialog
-
-    if (driveFolders.isEmpty) {
-      // Check if authentication failed (might be token expiry)
-      if (!service.isAuthenticated) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Session expired. Please reconnect.'),
-            backgroundColor: Colors.orange,
-            action: SnackBarAction(
-              label: 'Reconnect',
-              textColor: Colors.white,
-              onPressed: () => _handleAuthentication(context, service),
-            ),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No folders found in Drive root')),
-        );
-      }
-      return;
-    }
-
-    // Show folder selection dialog
-    final selected = await showDialog<DriveFolderInfo>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Folder'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: driveFolders.length,
-            itemBuilder: (context, index) {
-              final folder = driveFolders[index];
-              return ListTile(
-                leading: const Icon(Icons.folder),
-                title: Text(folder.name),
-                subtitle: folder.modifiedTime != null
-                    ? Text('Modified ${_formatDate(folder.modifiedTime!)}')
-                    : null,
-                onTap: () => Navigator.of(context).pop(folder),
-              );
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-
-    if (selected == null || !mounted) return;
+    if (selected == null || selected.isEmpty || !mounted) return;
 
     // Show loading while scanning
     showDialog(
@@ -600,7 +487,7 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
               children: [
                 CircularProgressIndicator(),
                 SizedBox(height: 16),
-                Text('Scanning folder...'),
+                Text('Scanning folders...'),
               ],
             ),
           ),
@@ -608,23 +495,46 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
       ),
     );
 
-    final added = await service.addFolder(selected);
+    // Add all selected folders
+    int addedCount = 0;
+    final List<String> skippedNames = [];
+
+    for (final folder in selected) {
+      final added = await service.addFolder(folder);
+      if (added) {
+        addedCount++;
+      } else {
+        skippedNames.add(folder.name);
+      }
+    }
 
     if (!mounted) return;
     Navigator.of(context).pop(); // Close loading dialog
 
-    if (added) {
-      infoLog('Folder added: ${selected.name}', tag: 'FolderSelect');
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Added folder: ${selected.name}')));
-    } else {
-      warningLog(
-        'Folder already exists: ${selected.name}',
-        tag: 'FolderSelect',
-      );
+    // Show result message
+    if (addedCount > 0) {
+      infoLog('Added $addedCount folders', tag: 'FolderSelect');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Folder ${selected.name} already added')),
+        SnackBar(
+          content: Text(
+            addedCount == 1
+                ? 'Added folder: ${selected.first.name}'
+                : 'Added $addedCount folders',
+          ),
+        ),
+      );
+    }
+
+    if (skippedNames.isNotEmpty) {
+      warningLog('Skipped ${skippedNames.length} folders', tag: 'FolderSelect');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            skippedNames.length == 1
+                ? 'Folder ${skippedNames.first} already added'
+                : '${skippedNames.length} folders already added',
+          ),
+        ),
       );
     }
   }
@@ -826,18 +736,6 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
       ),
       child: Text(label, style: const TextStyle(fontSize: 12)),
     );
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final diff = now.difference(date);
-
-    if (diff.inDays == 0) return 'Today';
-    if (diff.inDays == 1) return 'Yesterday';
-    if (diff.inDays < 7) return '${diff.inDays} days ago';
-    if (diff.inDays < 30) return '${(diff.inDays / 7).floor()} weeks ago';
-    if (diff.inDays < 365) return '${(diff.inDays / 30).floor()} months ago';
-    return '${(diff.inDays / 365).floor()} years ago';
   }
 }
 
@@ -1232,5 +1130,398 @@ class _DriveSessionRunnerScreenState extends State<_DriveSessionRunnerScreen> {
 
     // Should never reach here since practice screen is pushed
     return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+}
+
+/// ------------------------- Folder Browser Screen -------------------------
+
+/// Screen for navigating Drive folder hierarchy with breadcrumb navigation.
+/// Allows browsing into subfolders before selecting a folder to add.
+class _DriveFolderBrowserScreen extends StatefulWidget {
+  const _DriveFolderBrowserScreen({required this.service});
+
+  final GoogleDriveFolderService service;
+
+  @override
+  State<_DriveFolderBrowserScreen> createState() =>
+      _DriveFolderBrowserScreenState();
+}
+
+class _DriveFolderBrowserScreenState extends State<_DriveFolderBrowserScreen> {
+  // Breadcrumb path: [root, subfolder1, subfolder2, ...]
+  // Empty = root, non-empty = navigated into subfolders
+  final List<DriveFolderInfo> _path = [];
+
+  // Folders in current location
+  List<DriveFolderInfo>? _folders;
+
+  // Selected folder IDs in current view
+  final Set<String> _selectedIds = {};
+
+  // Loading/error state
+  bool _loading = false;
+  String? _error;
+
+  // Last clicked index for shift+click range selection
+  int? _lastClickedIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFolders();
+  }
+
+  /// Load folders at current path location.
+  Future<void> _loadFolders() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _selectedIds.clear(); // Clear selection when navigating
+      _lastClickedIndex = null;
+    });
+
+    try {
+      final parentId = _path.isEmpty ? null : _path.last.id;
+      final folders = await widget.service.listDriveFolders(parentId: parentId);
+      if (!mounted) return;
+
+      setState(() {
+        _folders = folders;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  /// Navigate into a subfolder (double-click action).
+  void _navigateInto(DriveFolderInfo folder) {
+    setState(() {
+      _path.add(folder);
+    });
+    _loadFolders();
+  }
+
+  /// Navigate back to a specific breadcrumb level.
+  void _navigateToLevel(int level) {
+    if (level < 0 || level > _path.length) return;
+
+    setState(() {
+      _path.removeRange(level, _path.length);
+    });
+    _loadFolders();
+  }
+
+  /// Handle folder click with modifier keys for multi-selection.
+  void _handleFolderClick(
+    DriveFolderInfo folder,
+    int index, {
+    bool isCtrlPressed = false,
+    bool isShiftPressed = false,
+  }) {
+    setState(() {
+      if (isShiftPressed && _lastClickedIndex != null && _folders != null) {
+        // Shift+click: select range from last clicked to current
+        final start = math.min(_lastClickedIndex!, index);
+        final end = math.max(_lastClickedIndex!, index);
+        for (int i = start; i <= end; i++) {
+          _selectedIds.add(_folders![i].id);
+        }
+      } else if (isCtrlPressed) {
+        // Ctrl+click: toggle selection
+        if (_selectedIds.contains(folder.id)) {
+          _selectedIds.remove(folder.id);
+        } else {
+          _selectedIds.add(folder.id);
+        }
+        _lastClickedIndex = index;
+      } else {
+        // Single click: select only this folder
+        _selectedIds.clear();
+        _selectedIds.add(folder.id);
+        _lastClickedIndex = index;
+      }
+    });
+  }
+
+  /// Clear selection (click on blank space).
+  void _clearSelection() {
+    setState(() {
+      _selectedIds.clear();
+      _lastClickedIndex = null;
+    });
+  }
+
+  /// Add selected folders and return them to parent screen.
+  void _addSelectedFolders() {
+    if (_selectedIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select at least one folder')),
+      );
+      return;
+    }
+
+    // Return list of selected folders
+    final selectedFolders =
+        _folders?.where((f) => _selectedIds.contains(f.id)).toList() ?? [];
+
+    Navigator.of(context).pop(selectedFolders);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Browse Folders'),
+        actions: [
+          // Add selected folders button
+          if (_selectedIds.isNotEmpty)
+            TextButton.icon(
+              onPressed: _addSelectedFolders,
+              icon: const Icon(Icons.add),
+              label: Text(
+                'Add ${_selectedIds.length} Folder${_selectedIds.length > 1 ? 's' : ''}',
+              ),
+            ),
+        ],
+      ),
+      body: GestureDetector(
+        // Tap on blank space to clear selection
+        onTap: _clearSelection,
+        behavior: HitTestBehavior.translucent,
+        child: Column(
+          children: [
+            // Breadcrumb navigation
+            _buildBreadcrumbs(),
+
+            const Divider(height: 1),
+
+            // Folder list
+            Expanded(child: _buildFolderList()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Build breadcrumb navigation bar.
+  Widget _buildBreadcrumbs() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Row(
+        children: [
+          // Root breadcrumb
+          InkWell(
+            onTap: () => _navigateToLevel(0),
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.home, size: 18),
+                  const SizedBox(width: 4),
+                  Text(
+                    'My Drive',
+                    style: TextStyle(
+                      fontWeight: _path.isEmpty
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Subfolder breadcrumbs
+          for (int i = 0; i < _path.length; i++) ...[
+            const Icon(Icons.chevron_right, size: 20),
+            InkWell(
+              onTap: () => _navigateToLevel(i + 1),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Text(
+                  _path[i].name,
+                  style: TextStyle(
+                    fontWeight: i == _path.length - 1
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Build folder list based on current state.
+  Widget _buildFolderList() {
+    // Loading state
+    if (_loading) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading folders...'),
+          ],
+        ),
+      );
+    }
+
+    // Error state
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              const Text(
+                'Failed to load folders',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(_error!, textAlign: TextAlign.center),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: _loadFolders,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Empty state
+    if (_folders == null || _folders!.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.folder_open, size: 64, color: Colors.grey),
+              const SizedBox(height: 16),
+              Text(
+                _path.isEmpty
+                    ? 'No folders in My Drive'
+                    : 'No subfolders in "${_path.last.name}"',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Folder list with multi-selection support
+    return ListView.builder(
+      itemCount: _folders!.length,
+      itemBuilder: (context, index) {
+        final folder = _folders![index];
+        final isSelected = _selectedIds.contains(folder.id);
+
+        return _FolderListItem(
+          folder: folder,
+          isSelected: isSelected,
+          onSingleTap: () {
+            _handleFolderClick(
+              folder,
+              index,
+              isCtrlPressed:
+                  HardwareKeyboard.instance.isControlPressed ||
+                  HardwareKeyboard.instance.isMetaPressed,
+              isShiftPressed: HardwareKeyboard.instance.isShiftPressed,
+            );
+          },
+          onDoubleTap: () => _navigateInto(folder),
+        );
+      },
+    );
+  }
+}
+
+/// Folder list item that detects single vs double tap.
+class _FolderListItem extends StatefulWidget {
+  final DriveFolderInfo folder;
+  final bool isSelected;
+  final VoidCallback onSingleTap;
+  final VoidCallback onDoubleTap;
+
+  const _FolderListItem({
+    required this.folder,
+    required this.isSelected,
+    required this.onSingleTap,
+    required this.onDoubleTap,
+  });
+
+  @override
+  State<_FolderListItem> createState() => _FolderListItemState();
+}
+
+class _FolderListItemState extends State<_FolderListItem> {
+  Timer? _doubleTapTimer;
+  int _tapCount = 0;
+
+  @override
+  void dispose() {
+    _doubleTapTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    _tapCount++;
+
+    if (_tapCount == 1) {
+      // First tap - start timer
+      _doubleTapTimer = Timer(const Duration(milliseconds: 300), () {
+        // Timer expired - it was a single tap
+        if (_tapCount == 1) {
+          widget.onSingleTap();
+        }
+        _tapCount = 0;
+      });
+    } else if (_tapCount == 2) {
+      // Second tap within timer - it's a double tap
+      _doubleTapTimer?.cancel();
+      _tapCount = 0;
+      widget.onDoubleTap();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      // Prevent tap from bubbling to parent (which would clear selection)
+      onTap: _handleTap,
+      child: ListTile(
+        selected: widget.isSelected,
+        leading: const Icon(Icons.folder),
+        title: Text(widget.folder.name),
+        subtitle: widget.folder.modifiedTime != null
+            ? Text(
+                'Modified ${widget.folder.modifiedTime!.year}-${widget.folder.modifiedTime!.month.toString().padLeft(2, '0')}-${widget.folder.modifiedTime!.day.toString().padLeft(2, '0')}',
+              )
+            : null,
+      ),
+    );
   }
 }
