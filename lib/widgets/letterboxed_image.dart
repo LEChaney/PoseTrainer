@@ -18,51 +18,17 @@ class LetterboxedImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _LetterboxPainter(image, background, opacity),
-      size: Size.infinite,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Background letterbox color
+        ColoredBox(color: background),
+        // Image with contain fit for aspect-preserving scaling
+        Opacity(
+          opacity: opacity,
+          child: RawImage(image: image, fit: BoxFit.contain),
+        ),
+      ],
     );
   }
-}
-
-class _LetterboxPainter extends CustomPainter {
-  final ui.Image img;
-  final Color background;
-  final double opacity;
-  _LetterboxPainter(this.img, this.background, this.opacity);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Fill background first so bars show on any side needed.
-    final bgPaint = Paint()..color = background;
-    canvas.drawRect(Offset.zero & size, bgPaint);
-
-    final iw = img.width.toDouble();
-    final ih = img.height.toDouble();
-    if (iw <= 0 || ih <= 0 || size.width <= 0 || size.height <= 0) return;
-
-    final sx = size.width / iw;
-    final sy = size.height / ih;
-    final s = sx < sy ? sx : sy; // contain
-    final drawW = iw * s;
-    final drawH = ih * s;
-    final dx = (size.width - drawW) / 2;
-    final dy = (size.height - drawH) / 2;
-    final dst = Rect.fromLTWH(dx, dy, drawW, drawH);
-
-    final src = Rect.fromLTWH(0, 0, iw, ih);
-    final paint = Paint();
-    if (opacity < 1.0) {
-      paint.color = Color.fromARGB((opacity * 255).round(), 255, 255, 255);
-      canvas.saveLayer(dst, paint);
-      canvas.drawImageRect(img, src, dst, Paint());
-      canvas.restore();
-    } else {
-      canvas.drawImageRect(img, src, dst, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _LetterboxPainter old) =>
-      old.img != img || old.background != background || old.opacity != opacity;
 }
