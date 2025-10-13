@@ -532,9 +532,24 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     Navigator.of(context).pop(); // Close loading dialog
 
     if (driveFolders.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No folders found in Drive root')),
-      );
+      // Check if authentication failed (might be token expiry)
+      if (!service.isAuthenticated) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Session expired. Please reconnect.'),
+            backgroundColor: Colors.orange,
+            action: SnackBarAction(
+              label: 'Reconnect',
+              textColor: Colors.white,
+              onPressed: () => _handleAuthentication(context, service),
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No folders found in Drive root')),
+        );
+      }
       return;
     }
 

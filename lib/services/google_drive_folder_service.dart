@@ -154,6 +154,7 @@ class GoogleDriveFolderService extends ChangeNotifier {
 
   drive.DriveApi? _driveApi;
   http.Client? _httpClient;
+  gsi.GoogleSignIn? _googleSignIn; // Keep reference to GoogleSignIn instance
   bool _isAuthenticated = false;
   bool _isInitialized = false;
   bool _isAuthenticating = false;
@@ -234,18 +235,18 @@ class GoogleDriveFolderService extends ChangeNotifier {
 
     try {
       // Use google_sign_in which handles the new Google Identity Services API
-      final googleSignIn = gsi.GoogleSignIn(
+      _googleSignIn = gsi.GoogleSignIn(
         clientId: _clientId,
         scopes: _scopes,
       );
 
       // Try silent sign-in first (uses existing session if available)
-      var account = await googleSignIn.signInSilently();
+      var account = await _googleSignIn!.signInSilently();
 
       // If silent sign-in fails, try regular sign-in
       if (account == null) {
         infoLog('Silent sign-in failed, prompting user', tag: _tag);
-        account = await googleSignIn.signIn();
+        account = await _googleSignIn!.signIn();
       }
 
       if (account == null) {
@@ -255,39 +256,8 @@ class GoogleDriveFolderService extends ChangeNotifier {
 
       infoLog('User signed in: ${account.email}', tag: _tag);
 
-      // Get authentication headers
-      final authHeaders = await account.authHeaders;
-
-      if (authHeaders.isEmpty) {
-        errorLog('Failed to get auth headers', tag: _tag);
-        return false;
-      }
-
-      // Extract access token from headers
-      final authHeader = authHeaders['Authorization'] ?? '';
-      final accessToken = authHeader.replaceFirst('Bearer ', '');
-
-      if (accessToken.isEmpty) {
-        errorLog('No access token in headers', tag: _tag);
-        return false;
-      }
-
-      // Create credentials for googleapis
-      final credentials = auth_io.AccessCredentials(
-        auth_io.AccessToken(
-          'Bearer',
-          accessToken,
-          DateTime.now().toUtc().add(const Duration(hours: 1)), // Must be UTC
-        ),
-        null, // No refresh token with google_sign_in
-        _scopes,
-      );
-
-      // Store tokens (note: google_sign_in handles token refresh internally)
-      await _persistCredentials(credentials);
-
       // Create authenticated HTTP client using google_sign_in's auth
-      _httpClient = _GoogleSignInAuthClient(googleSignIn, http.Client());
+      _httpClient = _GoogleSignInAuthClient(_googleSignIn!, http.Client());
 
       // Create Drive API client
       _driveApi = drive.DriveApi(_httpClient!);
@@ -351,6 +321,89 @@ class GoogleDriveFolderService extends ChangeNotifier {
         stackTrace: stack,
       );
       return false;
+    }
+  }
+
+  /// Attempt to refresh authentication silently when token expires.
+  /// Returns true if refresh succeeded, false if user needs to re-authenticate.
+  Future<bool> _refreshAuthSilently() async {
+    infoLog('Attempting silent token refresh', tag: _tag);
+
+    try {
+      if (kIsWeb && _googleSignIn != null) {
+        // For web, try silent sign-in
+        final account = await _googleSignIn!.signInSilently();
+
+        if (account != null) {
+          infoLog('Silent token refresh successful', tag: _tag);
+          // The _GoogleSignInAuthClient will automatically use the refreshed token
+          return true;
+        } else {
+          warningLog('Silent sign-in returned null account', tag: _tag);
+          return false;
+        }
+      } else {
+        // For mobile/desktop, the authenticatedClient should handle refresh automatically
+        // If we get here, we need to re-authenticate
+        warningLog('Token refresh not available for mobile', tag: _tag);
+        return false;
+      }
+    } catch (e, stack) {
+      errorLog(
+        'Failed to refresh token silently',
+        tag: _tag,
+        error: e,
+        stackTrace: stack,
+      );
+      return false;
+    }
+  }
+
+  /// Wrapper that handles authentication errors and retries with token refresh.
+  Future<T?> _withAuthRetry<T>(Future<T> Function() operation) async {
+    try {
+      return await operation();
+    } catch (e) {
+      // Check if it's an authentication error
+      final errorStr = e.toString();
+      if (errorStr.contains('invalid_token') ||
+          errorStr.contains('Access was denied') ||
+          errorStr.contains('401')) {
+        warningLog(
+          'Authentication error detected, attempting token refresh',
+          tag: _tag,
+        );
+
+        // Try to refresh silently
+        final refreshed = await _refreshAuthSilently();
+
+        if (refreshed) {
+          // Retry the operation with refreshed token
+          infoLog('Retrying operation with refreshed token', tag: _tag);
+          try {
+            return await operation();
+          } catch (retryError) {
+            errorLog(
+              'Operation failed after token refresh',
+              tag: _tag,
+              error: retryError,
+            );
+            rethrow;
+          }
+        } else {
+          // Need full re-authentication
+          errorLog(
+            'Token refresh failed, user needs to re-authenticate',
+            tag: _tag,
+          );
+          _isAuthenticated = false;
+          notifyListeners();
+          rethrow;
+        }
+      } else {
+        // Not an auth error, just rethrow
+        rethrow;
+      }
     }
   }
 
@@ -493,30 +546,35 @@ class GoogleDriveFolderService extends ChangeNotifier {
     infoLog('Listing Google Drive folders', tag: _tag);
 
     try {
-      // Query for folders only (not in trash, in root)
-      final query =
-          "mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents";
-      final fileList = await _driveApi!.files.list(
-        q: query,
-        spaces: 'drive',
-        orderBy: 'name',
-        pageSize: 1000, // Get up to 1000 folders
-        $fields: 'files(id, name, parents, modifiedTime)',
-      );
+      // Use auth retry wrapper to handle token expiration
+      final result = await _withAuthRetry<List<DriveFolderInfo>>(() async {
+        // Query for folders only (not in trash, in root)
+        final query =
+            "mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents";
+        final fileList = await _driveApi!.files.list(
+          q: query,
+          spaces: 'drive',
+          orderBy: 'name',
+          pageSize: 1000, // Get up to 1000 folders
+          $fields: 'files(id, name, parents, modifiedTime)',
+        );
 
-      final folders =
-          fileList.files?.map((file) {
-            return DriveFolderInfo(
-              id: file.id!,
-              name: file.name!,
-              parentId: file.parents?.firstOrNull,
-              modifiedTime: file.modifiedTime,
-            );
-          }).toList() ??
-          [];
+        final folders =
+            fileList.files?.map((file) {
+              return DriveFolderInfo(
+                id: file.id!,
+                name: file.name!,
+                parentId: file.parents?.firstOrNull,
+                modifiedTime: file.modifiedTime,
+              );
+            }).toList() ??
+            [];
 
-      infoLog('Found ${folders.length} folders in Drive root', tag: _tag);
-      return folders;
+        infoLog('Found ${folders.length} folders in Drive root', tag: _tag);
+        return folders;
+      });
+
+      return result ?? [];
     } catch (e, stack) {
       errorLog(
         'Failed to list Drive folders',
@@ -618,14 +676,19 @@ class GoogleDriveFolderService extends ChangeNotifier {
     int entryCount = 0;
 
     do {
-      final fileList = await _driveApi!.files.list(
-        q: query,
-        spaces: 'drive',
-        pageSize: 1000,
-        pageToken: pageToken,
-        $fields:
-            'nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, size, parents)',
-      );
+      // Use auth retry wrapper
+      final fileList = await _withAuthRetry<drive.FileList>(() async {
+        return await _driveApi!.files.list(
+          q: query,
+          spaces: 'drive',
+          pageSize: 1000,
+          pageToken: pageToken,
+          $fields:
+              'nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, size, parents)',
+        );
+      });
+
+      if (fileList == null) break;
 
       for (final file in fileList.files ?? []) {
         entryCount++;
@@ -706,25 +769,30 @@ class GoogleDriveFolderService extends ChangeNotifier {
     try {
       infoLog('Downloading image: $fileId', tag: _tag);
 
-      // Use Drive API to get file content
-      // The alt=media parameter tells Drive to return file content instead of metadata
-      final media =
-          await _driveApi!.files.get(
-                fileId,
-                downloadOptions: drive.DownloadOptions.fullMedia,
-              )
-              as drive.Media;
+      // Use auth retry wrapper to handle token expiration
+      final bytes = await _withAuthRetry<Uint8List>(() async {
+        // Use Drive API to get file content
+        // The alt=media parameter tells Drive to return file content instead of metadata
+        final media =
+            await _driveApi!.files.get(
+                  fileId,
+                  downloadOptions: drive.DownloadOptions.fullMedia,
+                )
+                as drive.Media;
 
-      // Read the stream into a byte list
-      final chunks = <List<int>>[];
-      await for (final chunk in media.stream) {
-        chunks.add(chunk);
+        // Read the stream into a byte list
+        final chunks = <List<int>>[];
+        await for (final chunk in media.stream) {
+          chunks.add(chunk);
+        }
+
+        // Combine all chunks
+        return Uint8List.fromList(chunks.expand((c) => c).toList());
+      });
+
+      if (bytes != null) {
+        infoLog('Downloaded ${bytes.length} bytes for $fileId', tag: _tag);
       }
-
-      // Combine all chunks
-      final bytes = Uint8List.fromList(chunks.expand((c) => c).toList());
-
-      infoLog('Downloaded ${bytes.length} bytes for $fileId', tag: _tag);
       return bytes;
     } catch (e, stack) {
       errorLog(
@@ -740,6 +808,17 @@ class GoogleDriveFolderService extends ChangeNotifier {
   /// Sign out and clear credentials.
   Future<void> signOut() async {
     infoLog('Signing out from Google Drive', tag: _tag);
+
+    // Sign out from GoogleSignIn if on web
+    if (_googleSignIn != null) {
+      try {
+        await _googleSignIn!.signOut();
+        infoLog('Signed out from GoogleSignIn', tag: _tag);
+      } catch (e) {
+        warningLog('Failed to sign out from GoogleSignIn: $e', tag: _tag);
+      }
+      _googleSignIn = null;
+    }
 
     _driveApi = null;
     _httpClient?.close();
