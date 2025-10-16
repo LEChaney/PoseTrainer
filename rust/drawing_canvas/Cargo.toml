@@ -1,0 +1,41 @@
+[package]
+name = "drawing_canvas"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# For future Flutter FFI integration
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "drawing_canvas_app"
+path = "src/main.rs"
+
+[dependencies]
+# Core WASM + Web API bindings
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+] }
+js-sys = "0.3"
+
+# Logging
+env_logger = "0.11"
+log = "0.4"
+
+# Graphics and windowing
+wgpu = "27.0"
+winit = { version = "0.30", features = ["rwh_05"] }
+
+# Async executor for desktop
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = "0.3"
+
+# Async runtime for WASM
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+console_log = "1.0"

@@ -1,0 +1,8 @@
+[target.wasm32-unknown-unknown]
+# Use the wasm32 target for web builds
+runner = 'wasm-bindgen-test-runner'
+
+[build]
+# Default to WASM target when building
+# Uncomment if you want WASM builds by default:
+# target = "wasm32-unknown-unknown"

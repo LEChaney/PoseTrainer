@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drawing Canvas - Rust/wgpu</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .info {
+            margin-bottom: 20px;
+            text-align: center;
+            color: #888;
+            font-size: 14px;
+        }
+
+        #canvas-container {
+            border: 2px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            max-width: 100%;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        .loading {
+            margin-top: 20px;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .error {
+            color: #ff6b6b;
+            background: #2a1a1a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border: 1px solid #ff6b6b;
+        }
+    </style>
+</head>
+<body>
+    <h1>Drawing Canvas</h1>
+    <div class="info">
+        Rust + wgpu + WASM<br>
+        Milestone: Clear to constant color
+    </div>
+    
+    <div id="canvas-container">
+        <!-- Canvas will be inserted here by Rust/winit -->
+    </div>
+
+    <div class="loading" id="loading">
+        Loading WASM module...
+    </div>
+
+    <script type="module">
+        import init from './pkg/drawing_canvas.js';
+
+        async function run() {
+            try {
+                await init();
+                document.getElementById('loading').style.display = 'none';
+                console.log('Drawing canvas initialized');
+            } catch (e) {
+                console.error('Failed to initialize:', e);
+                document.getElementById('loading').innerHTML = 
+                    `<div class="error">Failed to initialize: ${e.message}</div>`;
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>

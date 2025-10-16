@@ -1,3 +1,6 @@
 {
-    "cmake.ignoreCMakeListsMissing": true
+    "cmake.ignoreCMakeListsMissing": true,
+    "rust-analyzer.linkedProjects": [
+        "rust/drawing_canvas/Cargo.toml"
+    ]
 }

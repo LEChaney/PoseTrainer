@@ -1,0 +1,11 @@
+{
+  "name": "drawing-canvas-www",
+  "version": "0.1.0",
+  "description": "Web assets for drawing canvas standalone app",
+  "private": true,
+  "scripts": {
+    "build": "cd .. && wasm-pack build --target web --out-dir www/pkg",
+    "serve": "python -m http.server 8080"
+  },
+  "devDependencies": {}
+}
