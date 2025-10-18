@@ -53,9 +53,9 @@ impl Default for BrushParams {
         Self {
             size: 10.0,
             flow: 0.5,
-            hardness: 0.8,
-            spacing: 5.0,
-            color: [0.0, 0.0, 0.0, 1.0], // Black
+            hardness: 1.0,
+            spacing: 2.0,
+            color: [1.0, 0.0, 0.0, 1.0], // Red
         }
     }
 }
@@ -100,8 +100,10 @@ pub struct BrushState {
     pub params: BrushParams,
     /// How pressure affects the brush
     pub pressure_mapping: PressureMapping,
-    /// Last position where we placed a dab (for spacing calculation)
-    last_dab_position: Option<[f32; 2]>,
+    /// Last input position (not dab position) for segment calculation
+    last_input_position: Option<[f32; 2]>,
+    /// Last pressure value (for interpolation)
+    last_pressure: f32,
     /// Accumulated distance since last dab
     accumulated_distance: f32,
 }
@@ -112,7 +114,8 @@ impl BrushState {
         Self {
             params: BrushParams::default(),
             pressure_mapping: PressureMapping::default(),
-            last_dab_position: None,
+            last_input_position: None,
+            last_pressure: 1.0,
             accumulated_distance: 0.0,
         }
     }
@@ -122,14 +125,16 @@ impl BrushState {
         Self {
             params,
             pressure_mapping: PressureMapping::default(),
-            last_dab_position: None,
+            last_input_position: None,
+            last_pressure: 1.0,
             accumulated_distance: 0.0,
         }
     }
 
     /// Reset stroke state (call when starting a new stroke)
     pub fn reset_stroke(&mut self) {
-        self.last_dab_position = None;
+        self.last_input_position = None;
+        self.last_pressure = 1.0;
         self.accumulated_distance = 0.0;
     }
 
@@ -139,32 +144,39 @@ impl BrushState {
         let mut dabs = Vec::new();
 
         // If this is the first point, just place a dab
-        let prev_pos = match self.last_dab_position {
+        let prev_pos = match self.last_input_position {
             Some(pos) => pos,
             None => {
                 // First dab of stroke
                 let dab = self.create_dab(position, pressure);
                 dabs.push(dab);
-                self.last_dab_position = Some(position);
+                self.last_input_position = Some(position);
+                self.last_pressure = pressure;
                 self.accumulated_distance = 0.0;
                 return dabs;
             }
         };
 
-        // Calculate distance from last dab position to current position
+        let prev_pressure = self.last_pressure;
+
+        // Calculate distance from last INPUT position to current INPUT position
         let dx = position[0] - prev_pos[0];
         let dy = position[1] - prev_pos[1];
-        let distance = (dx * dx + dy * dy).sqrt();
+        let segment_distance = (dx * dx + dy * dy).sqrt();
 
-        self.accumulated_distance += distance;
+        // Add this segment's distance to accumulated distance
+        self.accumulated_distance += segment_distance;
 
         // Place dabs along the path based on spacing
         let spacing = self.params.spacing.max(0.1); // Avoid division by zero
 
         while self.accumulated_distance >= spacing {
-            // Calculate interpolation factor for this dab
-            let remaining = self.accumulated_distance - spacing;
-            let t = 1.0 - (remaining / distance).min(1.0);
+            // Calculate how far along the CURRENT SEGMENT this dab should be
+            // accumulated_distance is measured from the LAST DAB we placed (which might be in a previous segment)
+            // We need to figure out where along [prev_pos -> position] to place this dab
+            
+            let distance_into_segment = segment_distance - (self.accumulated_distance - spacing);
+            let t = (distance_into_segment / segment_distance).clamp(0.0, 1.0);
 
             // Interpolate position
             let dab_pos = [
@@ -172,18 +184,19 @@ impl BrushState {
                 prev_pos[1] + dy * t,
             ];
 
+            // Interpolate pressure
+            let dab_pressure = prev_pressure + (pressure - prev_pressure) * t;
+
             // Create and add dab
-            let dab = self.create_dab(dab_pos, pressure);
+            let dab = self.create_dab(dab_pos, dab_pressure);
             dabs.push(dab);
 
-            self.last_dab_position = Some(dab_pos);
             self.accumulated_distance -= spacing;
         }
 
-        // Update for next segment
-        if !dabs.is_empty() {
-            self.last_dab_position = dabs.last().map(|d| d.position);
-        }
+        // Update for next segment - store the current INPUT position
+        self.last_input_position = Some(position);
+        self.last_pressure = pressure;
 
         dabs
     }

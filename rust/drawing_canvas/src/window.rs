@@ -34,6 +34,81 @@ impl AppWrapper {
         }
     }
 
+    /// Extract pressure from Force enum
+    fn extract_pressure(force: &Option<Force>) -> f32 {
+        match force {
+            Some(Force::Normalized(p)) => *p as f32,
+            Some(Force::Calibrated { force, max_possible_force, .. }) => {
+                (force / max_possible_force) as f32
+            }
+            None => 1.0,
+        }
+    }
+
+    /// Extract tablet tool data (pressure, tilt, azimuth, twist) from TabletToolData
+    fn extract_tablet_data(data: &winit::event::TabletToolData) -> (f32, Option<[f32; 2]>, Option<f32>, Option<f32>) {
+        let pressure = Self::extract_pressure(&data.force);
+        
+        // Extract tilt (in degrees, 0-90) - need to clone since tilt() consumes self
+        let tilt = data.clone().tilt().map(|t| [t.x as f32, t.y as f32]);
+        
+        // Extract azimuth/altitude angle (in radians) - need to clone since angle() consumes self
+        let azimuth = data.clone().angle().map(|a| a.azimuth as f32);
+        
+        // Extract twist/rotation (in degrees, 0-359)
+        let twist = data.twist.map(|t| t as f32);
+        
+        (pressure, tilt, azimuth, twist)
+    }
+
+    /// Extract input data from ButtonSource (for PointerButton events)
+    fn extract_button_data(button: &winit::event::ButtonSource) -> (f32, Option<[f32; 2]>, Option<f32>, Option<f32>) {
+        match button {
+            winit::event::ButtonSource::Mouse(_) => {
+                // Mouse has no pressure or tilt
+                (1.0, None, None, None)
+            }
+            winit::event::ButtonSource::Touch { force, .. } => {
+                // Touch may have pressure via force
+                let pressure = Self::extract_pressure(force);
+                (pressure, None, None, None)
+            }
+            winit::event::ButtonSource::TabletTool { data, .. } => {
+                // Stylus/tablet tool with full data!
+                Self::extract_tablet_data(data)
+            }
+            winit::event::ButtonSource::Unknown(_) => {
+                // Unknown source, assume no pressure
+                (1.0, None, None, None)
+            }
+        }
+    }
+
+    /// Extract input data from PointerSource (for PointerMoved events)
+    /// Returns (pressure, tilt, azimuth, twist, pointer_type_name)
+    fn extract_pointer_data(source: &winit::event::PointerSource) -> (f32, Option<[f32; 2]>, Option<f32>, Option<f32>, &'static str) {
+        match source {
+            winit::event::PointerSource::Mouse => {
+                // Mouse has no pressure or tilt
+                (1.0, None, None, None, "Mouse")
+            }
+            winit::event::PointerSource::Touch { force, .. } => {
+                // Touch may have pressure via force
+                let pressure = Self::extract_pressure(force);
+                (pressure, None, None, None, "Touch")
+            }
+            winit::event::PointerSource::TabletTool { data, .. } => {
+                // Stylus/tablet tool with full data!
+                let (pressure, tilt, azimuth, twist) = Self::extract_tablet_data(data);
+                (pressure, tilt, azimuth, twist, "Stylus/Tablet")
+            }
+            winit::event::PointerSource::Unknown => {
+                // Unknown source, assume no pressure
+                (1.0, None, None, None, "Unknown")
+            }
+        }
+    }
+
     /// Get timestamp in milliseconds since app start
     fn get_timestamp(&self) -> f64 {
         #[cfg(not(target_arch = "wasm32"))]
@@ -102,8 +177,11 @@ impl AppWrapper {
 
             wasm_bindgen_futures::spawn_local(async move {
                 debug::update_status("Creating renderer...");
-                let renderer = Renderer::new(window_for_renderer, initial_size).await;
-                let app = App::new();
+                let mut renderer = Renderer::new(window_for_renderer, initial_size).await;
+                let mut app = App::new();
+                
+                // Clear canvas to initial color
+                app.clear_canvas(&mut renderer);
 
                 unsafe {
                     *renderer_ptr = Some(renderer);
@@ -122,8 +200,11 @@ impl AppWrapper {
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Desktop: Block on async initialization
-            let renderer = pollster::block_on(Renderer::new(window.clone(), initial_size));
-            let app = App::new();
+            let mut renderer = pollster::block_on(Renderer::new(window.clone(), initial_size));
+            let mut app = App::new();
+            
+            // Clear canvas to initial color
+            app.clear_canvas(&mut renderer);
 
             self.renderer = Some(renderer);
             self.app = Some(app);
@@ -249,19 +330,22 @@ impl ApplicationHandler for AppWrapper {
                     // Don't request another redraw - we're in Wait mode, only redraw on events
                 }
             }
-            WindowEvent::PointerButton { state, primary, .. } => {
+            WindowEvent::PointerButton { button, state, primary, .. } => {
                 // Handle pointer button press/release (mouse, stylus, touch)
                 // For now, only respond to primary button (left click, stylus tip, finger)
                 if primary {
                     if let Some(cursor_pos) = self.cursor_position {
                         let timestamp = self.get_timestamp();
                         
+                        // Extract pressure and tablet data from the button source
+                        let (pressure, tilt, azimuth, twist) = Self::extract_button_data(&button);
+                        
                         let event = PointerEvent {
                             position: [cursor_pos.x as f32, cursor_pos.y as f32],
-                            pressure: 1.0, // Will be refined by PointerMoved events with tablet data
-                            tilt: None,
-                            azimuth: None,
-                            twist: None,
+                            pressure,
+                            tilt,
+                            azimuth,
+                            twist,
                             timestamp,
                             event_type: match state {
                                 ElementState::Pressed => PointerEventType::Down,
@@ -271,7 +355,7 @@ impl ApplicationHandler for AppWrapper {
 
                         if let Some(app) = &mut self.app {
                             app.queue_input_event(event);
-                            log::debug!("Pointer button {:?} at {:?}", state, cursor_pos);
+                            log::debug!("Pointer button {:?} at {:?}, pressure={}", state, cursor_pos, pressure);
                         }
 
                         // Request redraw to process the input
@@ -289,51 +373,7 @@ impl ApplicationHandler for AppWrapper {
                 let timestamp = self.get_timestamp();
                 
                 // Extract pressure and tablet data from the pointer source
-                let (pressure, tilt, azimuth, twist, ptr_type) = match source {
-                    winit::event::PointerSource::Mouse => {
-                        // Mouse has no pressure or tilt
-                        (1.0, None, None, None, "Mouse")
-                    }
-                    winit::event::PointerSource::Touch { force, .. } => {
-                        // Touch may have pressure via force
-                        let pressure = match force {
-                            Some(Force::Normalized(p)) => p as f32,
-                            Some(Force::Calibrated { force, max_possible_force, .. }) => {
-                                (force / max_possible_force) as f32
-                            }
-                            None => 1.0,
-                        };
-                        (pressure, None, None, None, "Touch")
-                    }
-                    winit::event::PointerSource::TabletTool { data, .. } => {
-                        // Stylus/tablet tool with full data!
-                        let pressure = match &data.force {
-                            Some(Force::Normalized(p)) => *p as f32,
-                            Some(Force::Calibrated { force, max_possible_force, .. }) => {
-                                (force / max_possible_force) as f32
-                            }
-                            None => 1.0,
-                        };
-                        
-                        // Extract tilt (in degrees, 0-90) - need to clone since tilt() consumes self
-                        let tilt = data.clone().tilt().map(|t| [t.x as f32, t.y as f32]);
-                        
-                        // Extract azimuth/altitude angle (in radians) - need to clone since angle() consumes self
-                        let azimuth = data.clone().angle().map(|a| a.azimuth as f32);
-                        
-                        // Extract twist/rotation (in degrees, 0-359)
-                        let twist = data.twist.map(|t| t as f32);
-                        
-                        log::debug!("Tablet tool data: pressure={}, tilt={:?}, azimuth={:?}, twist={:?}", 
-                                    pressure, tilt, azimuth, twist);
-                        
-                        (pressure, tilt, azimuth, twist, "Stylus/Tablet")
-                    }
-                    winit::event::PointerSource::Unknown => {
-                        // Unknown source, assume no pressure
-                        (1.0, None, None, None, "Unknown")
-                    }
-                };
+                let (pressure, tilt, azimuth, twist, ptr_type) = Self::extract_pointer_data(&source);
                 
                 // Update debug overlay with pointer info
                 debug::update_pointer(

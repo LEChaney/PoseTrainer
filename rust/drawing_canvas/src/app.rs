@@ -36,7 +36,21 @@ impl App {
 
     /// Render the application (called each frame)
     pub fn render(&mut self, renderer: &mut Renderer) {
-        renderer.render(self.clear_color);
+        // Process input events and generate brush dabs
+        let dabs = self.process_input_events();
+        
+        // Render dabs to canvas if any
+        if !dabs.is_empty() {
+            renderer.render_dabs(&dabs);
+        }
+        
+        // Copy canvas to surface
+        renderer.render();
+    }
+
+    /// Clear the canvas
+    pub fn clear_canvas(&mut self, renderer: &mut Renderer) {
+        renderer.clear_canvas(self.clear_color);
     }
 
     /// Set the clear color

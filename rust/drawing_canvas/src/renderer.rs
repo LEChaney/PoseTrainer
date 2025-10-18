@@ -4,6 +4,41 @@
 //! It's designed to be independent of the windowing system where possible.
 
 use wgpu;
+use wgpu::util::DeviceExt;
+use crate::brush::BrushDab;
+
+/// Uniforms for brush shader (canvas size)
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct BrushUniforms {
+    canvas_size: [f32; 2],
+    _padding: [f32; 2],  // Align to 16 bytes
+}
+
+/// Vertex data for a single brush dab instance
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct DabInstance {
+    position: [f32; 2],
+    size: f32,
+    opacity: f32,
+    color: [f32; 4],
+    hardness: f32,
+    _padding: [f32; 3],  // Align to 16 bytes
+}
+
+impl From<BrushDab> for DabInstance {
+    fn from(dab: BrushDab) -> Self {
+        Self {
+            position: dab.position,
+            size: dab.size,
+            opacity: dab.opacity,
+            color: dab.color,
+            hardness: dab.hardness,
+            _padding: [0.0; 3],
+        }
+    }
+}
 
 /// Renderer wraps the wgpu device, queue, and surface
 pub struct Renderer {
@@ -13,6 +48,20 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     max_texture_dimension: u32,
+    
+    // Brush rendering pipeline
+    brush_pipeline: wgpu::RenderPipeline,
+    brush_uniform_buffer: wgpu::Buffer,
+    brush_bind_group: wgpu::BindGroup,
+    
+    // Canvas texture for accumulating strokes
+    canvas_texture: wgpu::Texture,
+    canvas_view: wgpu::TextureView,
+    
+    // Blit pipeline for copying canvas to surface
+    blit_pipeline: wgpu::RenderPipeline,
+    blit_bind_group: wgpu::BindGroup,
+    canvas_sampler: wgpu::Sampler,
 }
 
 impl Renderer {
@@ -149,6 +198,72 @@ impl Renderer {
         log::info!("✅ Renderer initialized: {}x{}, format: {:?}", size.width, size.height, surface_format);
         crate::debug::update_status("✅ Renderer complete!");
 
+        // Initialize brush rendering pipeline
+        let brush_pipeline = Self::create_brush_pipeline(&device, surface_format);
+        log::info!("✅ Brush pipeline created");
+        
+        // Create uniform buffer for canvas size
+        let brush_uniforms = BrushUniforms {
+            canvas_size: [clamped_width as f32, clamped_height as f32],
+            _padding: [0.0; 2],
+        };
+        let brush_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Brush Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[brush_uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        // Create bind group for uniforms
+        let brush_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Brush Bind Group"),
+            layout: &brush_pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: brush_uniform_buffer.as_entire_binding(),
+            }],
+        });
+        
+        // Create canvas texture for accumulating strokes
+        let (canvas_texture, canvas_view) = Self::create_canvas_texture(
+            &device,
+            clamped_width,
+            clamped_height,
+            surface_format,
+        );
+        log::info!("✅ Canvas texture created: {}x{}", clamped_width, clamped_height);
+
+        // Create blit pipeline for copying canvas to surface
+        let (blit_pipeline, blit_bind_group_layout) = Self::create_blit_pipeline(&device, surface_format);
+        log::info!("✅ Blit pipeline created");
+        
+        // Create sampler for canvas texture
+        let canvas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Canvas Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        
+        // Create bind group for blit pipeline
+        let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Blit Bind Group"),
+            layout: &blit_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&canvas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&canvas_sampler),
+                },
+            ],
+        });
+
         Self {
             surface,
             device,
@@ -156,7 +271,238 @@ impl Renderer {
             config,
             size,
             max_texture_dimension,
+            brush_pipeline,
+            brush_uniform_buffer,
+            brush_bind_group,
+            canvas_texture,
+            canvas_view,
+            blit_pipeline,
+            blit_bind_group,
+            canvas_sampler,
         }
+    }
+
+    /// Create the brush rendering pipeline
+    fn create_brush_pipeline(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        // Load shader
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Brush Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/brush.wgsl").into()),
+        });
+        
+        // Create bind group layout for uniforms
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Brush Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        
+        // Create pipeline layout
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Brush Pipeline Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        // Vertex buffer layout for dab instances
+        let vertex_buffer_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<DabInstance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                // position
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // size
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // opacity
+                wgpu::VertexAttribute {
+                    offset: 12,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // color
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // hardness
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32,
+                },
+            ],
+        };
+        
+        // Create the render pipeline
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Brush Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[vertex_buffer_layout],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        })
+    }
+
+    /// Create canvas texture for accumulating strokes
+    fn create_canvas_texture(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Canvas Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT 
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        (texture, view)
+    }
+
+    /// Create the blit pipeline for copying canvas to surface
+    fn create_blit_pipeline(
+        device: &wgpu::Device,
+        target_format: wgpu::TextureFormat,
+    ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+        // Load shader
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Blit Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
+        });
+        
+        // Create bind group layout for texture and sampler
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Blit Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        
+        // Create pipeline layout
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Blit Pipeline Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        // Create the render pipeline
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Blit Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        
+        (pipeline, bind_group_layout)
     }
 
     /// Resize the surface
@@ -177,8 +523,98 @@ impl Renderer {
             self.config.width = clamped_width;
             self.config.height = clamped_height;
             self.surface.configure(&self.device, &self.config);
-            log::debug!("Surface resized to: {}x{}", clamped_width, clamped_height);
+            
+            // Recreate canvas texture with new size
+            let (canvas_texture, canvas_view) = Self::create_canvas_texture(
+                &self.device,
+                clamped_width,
+                clamped_height,
+                self.config.format,
+            );
+            self.canvas_texture = canvas_texture;
+            self.canvas_view = canvas_view;
+            
+            // Recreate blit bind group with new canvas view
+            let blit_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Blit Bind Group"),
+                layout: &self.blit_pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.canvas_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.canvas_sampler),
+                    },
+                ],
+            });
+            self.blit_bind_group = blit_bind_group;
+            
+            // Update uniform buffer with new canvas size
+            let brush_uniforms = BrushUniforms {
+                canvas_size: [clamped_width as f32, clamped_height as f32],
+                _padding: [0.0; 2],
+            };
+            self.queue.write_buffer(
+                &self.brush_uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[brush_uniforms]),
+            );
+            
+            log::debug!("Surface and canvas resized to: {}x{}", clamped_width, clamped_height);
         }
+    }
+
+    /// Render brush dabs to the canvas texture
+    pub fn render_dabs(&mut self, dabs: &[BrushDab]) {
+        if dabs.is_empty() {
+            return;
+        }
+        
+        // Convert dabs to instance data
+        let instances: Vec<DabInstance> = dabs.iter().map(|&dab| dab.into()).collect();
+        
+        // Create instance buffer
+        let instance_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Dab Instance Buffer"),
+            contents: bytemuck::cast_slice(&instances),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        
+        // Create command encoder
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Brush Render Encoder"),
+        });
+        
+        // Render dabs to canvas texture
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Brush Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.canvas_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,  // Keep existing canvas content
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            
+            render_pass.set_pipeline(&self.brush_pipeline);
+            render_pass.set_bind_group(0, &self.brush_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, instance_buffer.slice(..));
+            
+            // Draw 6 vertices per instance (2 triangles = 1 quad per dab)
+            render_pass.draw(0..6, 0..instances.len() as u32);
+        }
+        
+        self.queue.submit(std::iter::once(encoder.finish()));
+        log::debug!("Rendered {} brush dabs", dabs.len());
     }
 
     pub fn is_valid_surface(&self) -> bool {
@@ -187,8 +623,8 @@ impl Renderer {
         && self.surface.get_current_texture().is_ok()
     }
 
-    /// Render a frame
-    pub fn render(&mut self, clear_color: [f64; 4]) {
+    /// Render a frame (blit canvas to surface)
+    pub fn render(&mut self) {
         if !self.is_valid_surface() {
             log::warn!("Invalid surface state, skipping render");
             return;
@@ -214,13 +650,45 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
-        // Clear to color
+        // Blit canvas texture to surface using full-screen quad
         {
-            log::debug!("Clearing frame to color: {:?}", clear_color);
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Clear Pass"),
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Blit Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            render_pass.set_pipeline(&self.blit_pipeline);
+            render_pass.set_bind_group(0, &self.blit_bind_group, &[]);
+            render_pass.draw(0..6, 0..1);
+        }
+
+        // Submit commands
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+    }
+
+    /// Clear the canvas to a color
+    pub fn clear_canvas(&mut self, clear_color: [f64; 4]) {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Clear Canvas Encoder"),
+        });
+
+        {
+            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Clear Canvas Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.canvas_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -239,9 +707,8 @@ impl Renderer {
             });
         }
 
-        // Submit commands
         self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        log::debug!("Canvas cleared to color: {:?}", clear_color);
     }
 
     /// Get the current surface size
