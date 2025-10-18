@@ -48,6 +48,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     max_texture_dimension: u32,
+    canvas_format: wgpu::TextureFormat,  // Canvas uses linear format for correct alpha blending
     
     // Brush rendering pipeline
     brush_pipeline: wgpu::RenderPipeline,
@@ -158,12 +159,30 @@ impl Renderer {
         let surface_caps = surface.get_capabilities(&adapter);
         log::info!("Surface capabilities: formats={:?}, present_modes={:?}", 
                    surface_caps.formats, surface_caps.present_modes);
+        
+        // Select an sRGB surface format
+        // Prefer sRGB formats for proper color space handling
         let surface_format = surface_caps
             .formats
             .iter()
             .copied()
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
+        
+        log::info!("Selected surface format: {:?}", surface_format);
+        
+        // Canvas texture uses LINEAR format for correct alpha blending
+        // wgpu will automatically convert linear → sRGB for sRGB surface formats
+        let canvas_format = match surface_format {
+            wgpu::TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
+            _ => {
+                log::warn!("Unexpected surface format {:?}, assuming linear equivalent exists", surface_format);
+                surface_format
+            }
+        };
+        
+        log::info!("Canvas texture format: {:?} (linear for correct blending)", canvas_format);
 
         // Clamp size to max texture dimension to avoid WebGL limits
         let clamped_width = size.width.min(max_texture_dimension);
@@ -195,11 +214,12 @@ impl Renderer {
             log::warn!("Skipping surface configuration (invalid size: {}x{})", config.width, config.height);
         }
 
-        log::info!("✅ Renderer initialized: {}x{}, format: {:?}", size.width, size.height, surface_format);
+        log::info!("✅ Renderer initialized: {}x{}, surface: {:?}, canvas: {:?}", 
+                   size.width, size.height, surface_format, canvas_format);
         crate::debug::update_status("✅ Renderer complete!");
 
-        // Initialize brush rendering pipeline
-        let brush_pipeline = Self::create_brush_pipeline(&device, surface_format);
+        // Initialize brush rendering pipeline (renders to linear canvas)
+        let brush_pipeline = Self::create_brush_pipeline(&device, canvas_format);
         log::info!("✅ Brush pipeline created");
         
         // Create uniform buffer for canvas size
@@ -223,16 +243,16 @@ impl Renderer {
             }],
         });
         
-        // Create canvas texture for accumulating strokes
+        // Create canvas texture for accumulating strokes (uses LINEAR format)
         let (canvas_texture, canvas_view) = Self::create_canvas_texture(
             &device,
             clamped_width,
             clamped_height,
-            surface_format,
+            canvas_format,
         );
         log::info!("✅ Canvas texture created: {}x{}", clamped_width, clamped_height);
 
-        // Create blit pipeline for copying canvas to surface
+        // Create blit pipeline for copying canvas to surface (handles color space conversion)
         let (blit_pipeline, blit_bind_group_layout) = Self::create_blit_pipeline(&device, surface_format);
         log::info!("✅ Blit pipeline created");
         
@@ -271,6 +291,7 @@ impl Renderer {
             config,
             size,
             max_texture_dimension,
+            canvas_format,
             brush_pipeline,
             brush_uniform_buffer,
             brush_bind_group,
@@ -366,8 +387,10 @@ impl Renderer {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
                     blend: Some(wgpu::BlendState {
+                        // Premultiplied alpha blend mode
+                        // Source RGB is already multiplied by alpha in shader
                         color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            src_factor: wgpu::BlendFactor::One,
                             dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                             operation: wgpu::BlendOperation::Add,
                         },
@@ -524,12 +547,12 @@ impl Renderer {
             self.config.height = clamped_height;
             self.surface.configure(&self.device, &self.config);
             
-            // Recreate canvas texture with new size
+            // Recreate canvas texture with new size (uses stored canvas_format)
             let (canvas_texture, canvas_view) = Self::create_canvas_texture(
                 &self.device,
                 clamped_width,
                 clamped_height,
-                self.config.format,
+                self.canvas_format,
             );
             self.canvas_texture = canvas_texture;
             self.canvas_view = canvas_view;

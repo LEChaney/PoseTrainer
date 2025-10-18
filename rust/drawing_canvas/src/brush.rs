@@ -52,9 +52,9 @@ impl Default for BrushParams {
     fn default() -> Self {
         Self {
             size: 10.0,
-            flow: 0.5,
+            flow: 0.8,
             hardness: 1.0,
-            spacing: 2.0,
+            spacing: 1.0,
             color: [1.0, 0.0, 0.0, 1.0], // Red
         }
     }

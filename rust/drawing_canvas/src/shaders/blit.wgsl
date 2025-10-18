@@ -1,5 +1,7 @@
 // Blit Shader
-// Simple full-screen quad that copies a texture to the screen
+// Copies canvas texture to display surface
+// Canvas is in LINEAR color space (for correct alpha blending)
+// Display surface is sRGB - wgpu handles automatic linear → sRGB conversion
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -55,8 +57,13 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return output;
 }
 
-// Fragment shader: Sample and output texture
+// Fragment shader: Sample canvas and pass through
+// wgpu automatically converts linear → sRGB for sRGB surface formats
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(canvas_texture, canvas_sampler, input.uv);
+    // Sample linear color from canvas
+    let linear_color = textureSample(canvas_texture, canvas_sampler, input.uv);
+    
+    // Pass through - wgpu handles linear → sRGB conversion automatically
+    return linear_color;
 }

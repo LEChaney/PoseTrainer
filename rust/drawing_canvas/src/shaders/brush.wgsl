@@ -81,6 +81,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let falloff = smoothstep(input.hardness, 1.0, dist);
     let alpha = (1.0 - falloff) * input.opacity;
     
-    // Return color with calculated alpha
-    return vec4<f32>(input.color.rgb, alpha);
+    // Return premultiplied alpha for correct blending
+    // Premultiply: RGB = RGB * A
+    return vec4<f32>(input.color.rgb * alpha, alpha);
 }
