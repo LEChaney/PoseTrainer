@@ -19,13 +19,15 @@
             flex-direction: column;
             align-items: center;
             padding: 20px;
-            min-height: 100vh;
+            height: 100vh;
+            overflow: hidden;
         }
 
         h1 {
             margin-bottom: 10px;
             font-size: 24px;
             font-weight: 600;
+            flex-shrink: 0;
         }
 
         .info {
@@ -33,6 +35,7 @@
             text-align: center;
             color: #888;
             font-size: 14px;
+            flex-shrink: 0;
         }
 
         #canvas-container {
@@ -40,11 +43,9 @@
             border-radius: 8px;
             overflow: hidden;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-            max-width: 100%;
-        }
-
-        canvas {
-            display: block;
+            flex: 1;
+            width: 100%;
+            display: flex;
         }
 
         .loading {

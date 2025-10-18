@@ -1,5 +1,6 @@
 {
     "cmake.ignoreCMakeListsMissing": true,
+    "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
     "rust-analyzer.linkedProjects": [
         "rust/drawing_canvas/Cargo.toml"
     ]

@@ -25,6 +25,44 @@ impl AppWrapper {
             app: None,
         }
     }
+
+    /// Set up a ResizeObserver to watch the container and resize the canvas accordingly
+    #[cfg(target_arch = "wasm32")]
+    fn setup_resize_observer(container: &web_sys::Element, window: std::sync::Arc<Window>) {
+        use wasm_bindgen::prelude::*;
+        use wasm_bindgen::JsCast;
+
+        let window_clone = window.clone();
+
+        let callback = Closure::<dyn Fn(js_sys::Array)>::new(move |entries: js_sys::Array| {
+            // Get the first entry (our container)
+            if let Some(entry) = entries.get(0).dyn_into::<web_sys::ResizeObserverEntry>().ok() {
+                let content_rect = entry.content_rect();
+                let width = content_rect.width() as u32;
+                let height = content_rect.height() as u32;
+                
+                log::info!("📐 Container resized to: {}x{}", width, height);
+                
+                // Request the window to resize to match the container
+                if width > 0 && height > 0 {
+                    let new_size = winit::dpi::LogicalSize::new(width, height);
+                    let _ = window_clone.request_inner_size(new_size);
+                }
+            }
+        });
+
+        let observer = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref())
+            .expect("Failed to create ResizeObserver");
+        
+        observer.observe(container);
+        
+        log::info!("✅ ResizeObserver set up on canvas-container");
+        
+        // Keep the callback alive by leaking it (it needs to live for the app's lifetime)
+        // TODO: Store callback somewhere to properly manage its lifetime? Maybe not needed if app
+        // only lives as long as the page where it's embedded?
+        callback.forget();
+    }
 }
 
 impl ApplicationHandler for AppWrapper {
@@ -49,14 +87,13 @@ impl ApplicationHandler for AppWrapper {
                 let canvas = window.canvas().expect("Failed to get canvas from window");
 
                 // Append canvas to DOM
-                web_sys::window()
+                let container = web_sys::window()
                     .and_then(|win| win.document())
-                    .and_then(|doc| {
-                        let container = doc.get_element_by_id("canvas-container")?;
-                        container.append_child(&canvas).ok()?;
-                        Some(())
-                    })
-                    .expect("Failed to append canvas to document");
+                    .and_then(|doc| doc.get_element_by_id("canvas-container"))
+                    .expect("Failed to find canvas-container element");
+
+                container.append_child(&canvas)
+                    .expect("Failed to append canvas to container");
 
                // NOW set the size (canvas is in DOM, so winit can apply CSS)
                // IMPORTANT: On web we can't set the canvas size until it's in the DOM.
@@ -73,6 +110,10 @@ impl ApplicationHandler for AppWrapper {
                 // Wrap window in Arc and store it
                 let window_arc = std::sync::Arc::new(window);
                 self.window = Some(window_arc.clone());
+
+                // Set up ResizeObserver to watch container and update canvas size
+                let window_for_resize = window_arc.clone();
+                Self::setup_resize_observer(&container, window_for_resize);
 
                 // Initialize renderer async
                 log::info!("🔧 Initializing renderer with size: {:?}", desired_size);
