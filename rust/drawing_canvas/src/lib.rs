@@ -8,10 +8,15 @@
 //! platform-specific initialization (windowing, canvas element creation).
 
 mod app;
+mod brush;
+pub mod debug;
+mod input;
 mod renderer;
 mod window;
 
 pub use app::App;
+pub use brush::{BrushDab, BrushParams, BrushState, PressureMapping};
+pub use input::{InputQueue, PointerEvent, PointerEventType};
 pub use renderer::Renderer;
 pub use window::AppWrapper;
 

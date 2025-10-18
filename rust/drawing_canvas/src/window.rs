@@ -4,16 +4,21 @@
 //! WASM (lib.rs) and desktop (main.rs) entry points.
 
 use crate::{App, Renderer};
+use crate::debug;
+use crate::input::{PointerEvent, PointerEventType};
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{WindowEvent, ElementState, Force};
 use winit::event_loop::ActiveEventLoop;
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 /// Wrapper for the application window and state
 pub struct AppWrapper {
-    pub window: Option<std::sync::Arc<Window>>,
+    pub window: Option<std::sync::Arc<Box<dyn Window>>>,
     pub renderer: Option<Renderer>,
     pub app: Option<App>,
+    cursor_position: Option<winit::dpi::PhysicalPosition<f64>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    start_time: Option<std::time::Instant>,
 }
 
 impl AppWrapper {
@@ -23,12 +28,34 @@ impl AppWrapper {
             window: None,
             renderer: None,
             app: None,
+            cursor_position: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            start_time: Some(std::time::Instant::now()),
+        }
+    }
+
+    /// Get timestamp in milliseconds since app start
+    fn get_timestamp(&self) -> f64 {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.start_time
+                .map(|start| start.elapsed().as_secs_f64() * 1000.0)
+                .unwrap_or(0.0)
+        }
+        
+        #[cfg(target_arch = "wasm32")]
+        {
+            // On WASM, use the browser's performance.now() API
+            web_sys::window()
+                .and_then(|win| win.performance())
+                .map(|perf| perf.now())
+                .unwrap_or(0.0)
         }
     }
 
     /// Set up a ResizeObserver to watch the container and resize the canvas accordingly
     #[cfg(target_arch = "wasm32")]
-    fn setup_resize_observer(container: &web_sys::Element, window: std::sync::Arc<Window>) {
+    fn setup_resize_observer(container: &web_sys::Element, window: std::sync::Arc<Box<dyn Window>>) {
         use wasm_bindgen::prelude::*;
         use wasm_bindgen::JsCast;
 
@@ -46,7 +73,7 @@ impl AppWrapper {
                 // Request the window to resize to match the container
                 if width > 0 && height > 0 {
                     let new_size = winit::dpi::LogicalSize::new(width, height);
-                    let _ = window_clone.request_inner_size(new_size);
+                    let _ = window_clone.request_surface_size(new_size.into());
                 }
             }
         });
@@ -63,28 +90,76 @@ impl AppWrapper {
         // only lives as long as the page where it's embedded?
         callback.forget();
     }
+
+    fn create_app_and_renderer(&mut self, window: std::sync::Arc<Box<dyn Window>>, initial_size: winit::dpi::PhysicalSize<u32>) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            // WASM: Initialize asynchronously
+            let window_for_renderer = window.clone();
+            let app_ptr = &mut self.app as *mut Option<App>;
+            let renderer_ptr = &mut self.renderer as *mut Option<Renderer>;
+            let window_for_redraw = window.clone();
+
+            wasm_bindgen_futures::spawn_local(async move {
+                debug::update_status("Creating renderer...");
+                let renderer = Renderer::new(window_for_renderer, initial_size).await;
+                let app = App::new();
+
+                unsafe {
+                    *renderer_ptr = Some(renderer);
+                    *app_ptr = Some(app);
+                }
+
+                log::info!("✅ Renderer initialized successfully");
+                debug::update_status("✅ Renderer ready");
+                debug::update_stage("Ready to draw!");
+                
+                // Request initial frame now that we're ready
+                window_for_redraw.request_redraw();
+            });
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Desktop: Block on async initialization
+            let renderer = pollster::block_on(Renderer::new(window.clone(), initial_size));
+            let app = App::new();
+
+            self.renderer = Some(renderer);
+            self.app = Some(app);
+
+            log::info!("✅ Renderer created (will be configured on first resize event)");
+        }
+    }
 }
 
 impl ApplicationHandler for AppWrapper {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        const WIDTH: u32 = 800;
-        const HEIGHT: u32 = 600;
+    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        debug::update_stage("Creating window...");
+        let initial_size = winit::dpi::PhysicalSize::new(800, 600);
         if self.window.is_none() {
-            let window_attributes = Window::default_attributes()
+            // Create the window
+            let window_attributes = WindowAttributes::default()
                 .with_title("Drawing Canvas")
-                .with_inner_size(winit::dpi::PhysicalSize::new(WIDTH, HEIGHT));
+                .with_surface_size(initial_size);
 
             let window = event_loop
                 .create_window(window_attributes)
                 .expect("Failed to create window");
 
-            log::info!("Window created: {:?}", window.inner_size());
+            log::info!("Window created: {:?}", window.surface_size());
+            debug::update_status("✅ Window created");
 
+            let window_arc = std::sync::Arc::new(window);
+            self.window = Some(window_arc.clone());
+
+            // On WASM, append the canvas to the DOM now
             #[cfg(target_arch = "wasm32")]
             {
-                use winit::platform::web::WindowExtWebSys;
+                use winit::platform::web::WindowExtWeb;
 
-                let canvas = window.canvas().expect("Failed to get canvas from window");
+                // Get canvas reference - this borrows it briefly
+                let canvas = window_arc.canvas().expect("Failed to get canvas from window");
 
                 // Append canvas to DOM
                 let container = web_sys::window()
@@ -94,84 +169,57 @@ impl ApplicationHandler for AppWrapper {
 
                 container.append_child(&canvas)
                     .expect("Failed to append canvas to container");
+                
+                // Drop the canvas reference before continuing
+                drop(canvas);
 
                // NOW set the size (canvas is in DOM, so winit can apply CSS)
                // IMPORTANT: On web we can't set the canvas size until it's in the DOM.
-               let desired_size = winit::dpi::PhysicalSize::new(WIDTH, HEIGHT);
-               let _ = window.request_inner_size(desired_size);
-               log::info!("✅ Canvas appended to DOM and size requested: {:?}", desired_size);
+               let _ = window_arc.request_surface_size(initial_size.into());
+               log::info!("✅ Canvas appended to DOM and size requested: {:?}", initial_size);
+               debug::update_status("✅ Canvas in DOM");
+               debug::update_stage("Initializing renderer...");
 
+                // Log canvas info (get a fresh reference)
+                let canvas = window_arc.canvas().expect("Failed to get canvas from window");
                 log::info!("Canvas size: {:?} x {:?}", canvas.width(), canvas.height());
                 log::info!("Canvas CSS: width={:?}, height={:?}", 
                     canvas.style().get_property_value("width").ok(),
                     canvas.style().get_property_value("height").ok()
                 );
-
-                // Wrap window in Arc and store it
-                let window_arc = std::sync::Arc::new(window);
-                self.window = Some(window_arc.clone());
+                drop(canvas);
 
                 // Set up ResizeObserver to watch container and update canvas size
                 let window_for_resize = window_arc.clone();
                 Self::setup_resize_observer(&container, window_for_resize);
 
                 // Initialize renderer async
-                log::info!("🔧 Initializing renderer with size: {:?}", desired_size);
-                
-                let window_for_renderer = window_arc.clone();
-                let app_ptr = &mut self.app as *mut Option<App>;
-                let renderer_ptr = &mut self.renderer as *mut Option<Renderer>;
-                
-                let window_for_redraw = window_arc.clone();
-
-                wasm_bindgen_futures::spawn_local(async move {
-                    let renderer = Renderer::new(window_for_renderer, desired_size).await;
-                    let app = App::new();
-
-                    unsafe {
-                        *renderer_ptr = Some(renderer);
-                        *app_ptr = Some(app);
-                    }
-
-                    log::info!("✅ Renderer initialized successfully");
-                    
-                    // Request initial frame now that we're ready
-                    window_for_redraw.request_redraw();
-                });
+                log::info!("🔧 Initializing renderer with size: {:?}", initial_size);
             }
 
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                // Desktop: Wrap in Arc for 'static lifetime, then block on async initialization
-                let initial_size = winit::dpi::PhysicalSize::new(WIDTH, HEIGHT);
-                let window_arc = std::sync::Arc::new(window);
-                
-                let renderer = pollster::block_on(Renderer::new(window_arc.clone(), initial_size));
-                let app = App::new();
-
-                self.window = Some(window_arc);
-                self.renderer = Some(renderer);
-                self.app = Some(app);
-
-                log::info!("✅ Renderer created (will be configured on first resize event)");
-            }
+            self.create_app_and_renderer(window_arc.clone(), initial_size);
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn resumed(&mut self, _: &dyn ActiveEventLoop) {
+        log::info!("Application resumed");
+    }
+
+    fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
                 log::info!("Close requested, exiting");
                 event_loop.exit();
             }
-            WindowEvent::Resized(physical_size) => {
+            WindowEvent::SurfaceResized(physical_size) => {
                 log::info!("⚠️ RESIZE EVENT: {:?}", physical_size);
+                debug::update_stage(&format!("Resized: {}x{}", physical_size.width, physical_size.height));
                 
                 // Log canvas state during resize
                 #[cfg(target_arch = "wasm32")]
                 {
                     if let Some(window) = &self.window {
-                        use winit::platform::web::WindowExtWebSys;
+                        use winit::platform::web::WindowExtWeb;
                         let canvas = window.canvas().expect("Canvas should exist");
                         log::info!("  Canvas attributes: {}x{}", canvas.width(), canvas.height());
                         log::info!("  Canvas CSS: width={:?}, height={:?}", 
@@ -190,13 +238,134 @@ impl ApplicationHandler for AppWrapper {
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(physical_size);
                     log::info!("✅ Surface configured with size: {:?}", physical_size);
+                    debug::update_status(&format!("Surface: {}x{}", physical_size.width, physical_size.height));
                 }
             }
             WindowEvent::RedrawRequested => {
                 // Render if we have valid components (renderer will check surface validity)
                 if let (Some(renderer), Some(app)) = (&mut self.renderer, &mut self.app) {
                     app.render(renderer);
+                    debug::increment_frame_count();
                     // Don't request another redraw - we're in Wait mode, only redraw on events
+                }
+            }
+            WindowEvent::PointerButton { state, primary, .. } => {
+                // Handle pointer button press/release (mouse, stylus, touch)
+                // For now, only respond to primary button (left click, stylus tip, finger)
+                if primary {
+                    if let Some(cursor_pos) = self.cursor_position {
+                        let timestamp = self.get_timestamp();
+                        
+                        let event = PointerEvent {
+                            position: [cursor_pos.x as f32, cursor_pos.y as f32],
+                            pressure: 1.0, // Will be refined by PointerMoved events with tablet data
+                            tilt: None,
+                            azimuth: None,
+                            twist: None,
+                            timestamp,
+                            event_type: match state {
+                                ElementState::Pressed => PointerEventType::Down,
+                                ElementState::Released => PointerEventType::Up,
+                            },
+                        };
+
+                        if let Some(app) = &mut self.app {
+                            app.queue_input_event(event);
+                            log::debug!("Pointer button {:?} at {:?}", state, cursor_pos);
+                        }
+
+                        // Request redraw to process the input
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+            }
+            WindowEvent::PointerMoved { source, position, .. } => {
+                // Track cursor position
+                self.cursor_position = Some(position);
+                
+                // Get timestamp before borrowing app
+                let timestamp = self.get_timestamp();
+                
+                // Extract pressure and tablet data from the pointer source
+                let (pressure, tilt, azimuth, twist, ptr_type) = match source {
+                    winit::event::PointerSource::Mouse => {
+                        // Mouse has no pressure or tilt
+                        (1.0, None, None, None, "Mouse")
+                    }
+                    winit::event::PointerSource::Touch { force, .. } => {
+                        // Touch may have pressure via force
+                        let pressure = match force {
+                            Some(Force::Normalized(p)) => p as f32,
+                            Some(Force::Calibrated { force, max_possible_force, .. }) => {
+                                (force / max_possible_force) as f32
+                            }
+                            None => 1.0,
+                        };
+                        (pressure, None, None, None, "Touch")
+                    }
+                    winit::event::PointerSource::TabletTool { data, .. } => {
+                        // Stylus/tablet tool with full data!
+                        let pressure = match &data.force {
+                            Some(Force::Normalized(p)) => *p as f32,
+                            Some(Force::Calibrated { force, max_possible_force, .. }) => {
+                                (force / max_possible_force) as f32
+                            }
+                            None => 1.0,
+                        };
+                        
+                        // Extract tilt (in degrees, 0-90) - need to clone since tilt() consumes self
+                        let tilt = data.clone().tilt().map(|t| [t.x as f32, t.y as f32]);
+                        
+                        // Extract azimuth/altitude angle (in radians) - need to clone since angle() consumes self
+                        let azimuth = data.clone().angle().map(|a| a.azimuth as f32);
+                        
+                        // Extract twist/rotation (in degrees, 0-359)
+                        let twist = data.twist.map(|t| t as f32);
+                        
+                        log::debug!("Tablet tool data: pressure={}, tilt={:?}, azimuth={:?}, twist={:?}", 
+                                    pressure, tilt, azimuth, twist);
+                        
+                        (pressure, tilt, azimuth, twist, "Stylus/Tablet")
+                    }
+                    winit::event::PointerSource::Unknown => {
+                        // Unknown source, assume no pressure
+                        (1.0, None, None, None, "Unknown")
+                    }
+                };
+                
+                // Update debug overlay with pointer info
+                debug::update_pointer(
+                    ptr_type,
+                    Some(position.x as f32),
+                    Some(position.y as f32),
+                    Some(pressure),
+                    tilt,
+                    azimuth,
+                    twist,
+                );
+                
+                // Handle pointer movement
+                if let Some(app) = &mut self.app {
+                    let event = PointerEvent {
+                        position: [position.x as f32, position.y as f32],
+                        pressure,
+                        tilt,
+                        azimuth,
+                        twist,
+                        timestamp,
+                        event_type: PointerEventType::Move,
+                    };
+
+                    app.queue_input_event(event);
+
+                    // Only request redraw if we have pending input (drawing)
+                    if app.has_pending_input() {
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                    }
                 }
             }
             _ => {}

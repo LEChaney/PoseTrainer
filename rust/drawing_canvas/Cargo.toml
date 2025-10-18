@@ -20,6 +20,7 @@ web-sys = { version = "0.3", features = [
     "Window",
     "Element",
     "HtmlCanvasElement",
+    "Performance",
 ] }
 js-sys = "0.3"
 
@@ -28,8 +29,9 @@ env_logger = "0.11"
 log = "0.4"
 
 # Graphics and windowing
-wgpu = "27.0"
-winit = { version = "0.30", features = ["rwh_05"] }
+wgpu = { version = "27.0", features = ["webgl"] }
+# Using git dependency for unreleased tablet/stylus pointer API
+winit = { git = "https://github.com/rust-windowing/winit", branch = "master" }
 
 # Async executor for desktop
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

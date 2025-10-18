@@ -77,6 +77,39 @@
         <!-- Canvas will be inserted here by Rust/winit -->
     </div>
 
+    <!-- Debug overlay -->
+    <div id="debug-overlay" style="
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.85);
+        color: #0f0;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        padding: 12px;
+        border-radius: 4px;
+        border: 1px solid #0f0;
+        max-width: 300px;
+        pointer-events: none;
+        z-index: 1000;
+        line-height: 1.4;
+    ">
+        <div style="color: #ff0; font-weight: bold; margin-bottom: 8px;">🔍 DEBUG INFO</div>
+        <div id="debug-status">Initializing...</div>
+        <div id="debug-stage" style="margin-top: 8px;">Stage: ---</div>
+        <div id="debug-pointer" style="margin-top: 8px; border-top: 1px solid #333; padding-top: 8px;">
+            <div>Pointer: <span id="ptr-type">---</span></div>
+            <div>Position: <span id="ptr-pos">---</span></div>
+            <div style="color: #ff0; font-weight: bold;">Pressure: <span id="ptr-pressure">---</span></div>
+            <div>Tilt: <span id="ptr-tilt">---</span></div>
+            <div>Azimuth: <span id="ptr-azimuth">---</span></div>
+            <div>Twist: <span id="ptr-twist">---</span></div>
+        </div>
+        <div id="debug-frames" style="margin-top: 8px; border-top: 1px solid #333; padding-top: 8px;">
+            Frames: <span id="frame-count">0</span>
+        </div>
+    </div>
+
     <div class="loading" id="loading">
         Loading WASM module...
     </div>
@@ -84,13 +117,59 @@
     <script type="module">
         import init from './pkg/drawing_canvas.js';
 
+        // Debug state
+        let frameCount = 0;
+        
+        // Make debug functions available globally for Rust to call
+        window.updateDebugStatus = function(status) {
+            document.getElementById('debug-status').textContent = status;
+        };
+        
+        window.updateDebugStage = function(stage) {
+            document.getElementById('debug-stage').textContent = 'Stage: ' + stage;
+        };
+        
+        window.updateDebugPointer = function(type, x, y, pressure, tilt_x, tilt_y, azimuth, twist) {
+            document.getElementById('ptr-type').textContent = type || '---';
+            document.getElementById('ptr-pos').textContent = 
+                (x !== null && x !== undefined && y !== null && y !== undefined) ? `${x.toFixed(1)}, ${y.toFixed(1)}` : '---';
+            
+            const pressureEl = document.getElementById('ptr-pressure');
+            if (pressure !== null && pressure !== undefined) {
+                pressureEl.textContent = pressure.toFixed(3);
+                // Color code pressure: red = low, yellow = medium, green = high
+                if (pressure < 0.3) pressureEl.style.color = '#f44';
+                else if (pressure < 0.7) pressureEl.style.color = '#ff0';
+                else pressureEl.style.color = '#0f0';
+            } else {
+                pressureEl.textContent = '---';
+                pressureEl.style.color = '#ff0';
+            }
+            
+            document.getElementById('ptr-tilt').textContent = 
+                (tilt_x !== null && tilt_x !== undefined && tilt_y !== null && tilt_y !== undefined) ? `${tilt_x.toFixed(1)}°, ${tilt_y.toFixed(1)}°` : '---';
+            document.getElementById('ptr-azimuth').textContent = 
+                (azimuth !== null && azimuth !== undefined) ? `${azimuth.toFixed(3)} rad` : '---';
+            document.getElementById('ptr-twist').textContent = 
+                (twist !== null && twist !== undefined) ? `${twist.toFixed(1)}°` : '---';
+        };
+        
+        window.incrementFrameCount = function() {
+            frameCount++;
+            document.getElementById('frame-count').textContent = frameCount;
+        };
+
         async function run() {
             try {
+                updateDebugStatus('Loading WASM...');
                 await init();
                 document.getElementById('loading').style.display = 'none';
+                updateDebugStatus('✅ WASM Loaded');
+                updateDebugStage('Waiting for window...');
                 console.log('Drawing canvas initialized');
             } catch (e) {
                 console.error('Failed to initialize:', e);
+                updateDebugStatus('❌ FAILED: ' + e.message);
                 document.getElementById('loading').innerHTML = 
                     `<div class="error">Failed to initialize: ${e.message}</div>`;
             }
