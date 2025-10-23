@@ -92,17 +92,17 @@ impl App {
                 crate::input::PointerEventType::Down => {
                     // Start new stroke
                     self.brush_state.reset_stroke();
-                    let dabs = self.brush_state.calculate_dabs(event.position, event.pressure);
+                    let dabs = self.brush_state.calculate_dabs(event.position, event.pressure, event.event_type);
                     all_dabs.extend(dabs);
                 }
                 crate::input::PointerEventType::Move => {
                     // Continue stroke
-                    let dabs = self.brush_state.calculate_dabs(event.position, event.pressure);
+                    let dabs = self.brush_state.calculate_dabs(event.position, event.pressure, event.event_type);
                     all_dabs.extend(dabs);
                 }
                 crate::input::PointerEventType::Up => {
                     // End stroke
-                    let dabs = self.brush_state.calculate_dabs(event.position, event.pressure);
+                    let dabs = self.brush_state.calculate_dabs(event.position, event.pressure, event.event_type);
                     all_dabs.extend(dabs);
                 }
             }
