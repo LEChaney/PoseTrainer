@@ -315,9 +315,10 @@ impl ApplicationHandler for AppWrapper {
                     log::warn!("Ignoring resize to zero size: {:?}", physical_size);
                     return;
                 }
-                
-                if let Some(renderer) = &mut self.renderer {
+
+                if let (Some(renderer), Some(app)) = (&mut self.renderer, &mut self.app) {
                     renderer.resize(physical_size);
+                    app.clear_canvas(renderer);
                     log::info!("✅ Surface configured with size: {:?}", physical_size);
                     debug::update_status(&format!("Surface: {}x{}", physical_size.width, physical_size.height));
                 }

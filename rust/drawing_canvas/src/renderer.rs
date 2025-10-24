@@ -200,7 +200,8 @@ impl Renderer {
             width: clamped_width,
             height: clamped_height,
             present_mode: surface_caps.present_modes[0],
-            alpha_mode: surface_caps.alpha_modes[0],
+            // Use Opaque alpha mode to prevent canvas transparency showing HTML background
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
