@@ -7,6 +7,7 @@
 use crate::brush::BrushState;
 use crate::input::{InputQueue, PointerEvent};
 use crate::renderer::Renderer;
+use crate::color;
 
 /// Main application state
 pub struct App {
@@ -21,9 +22,17 @@ pub struct App {
 impl App {
     /// Create a new application with default state
     pub fn new() -> Self {
+        // Flutter's kPaperColor: #F4F3EF (warm off-white drawing surface) in sRGB
+        // Convert to linear space for correct rendering
+        let clear_color_linear = color::srgb_u8_to_linear_f32(244, 243, 239, 1.0);
+        
         Self {
-            // Red background, for testing
-            clear_color: [1.0, 0.0, 0.0, 1.0], // #ff0000ff
+            clear_color: [
+                clear_color_linear[0] as f64,
+                clear_color_linear[1] as f64,
+                clear_color_linear[2] as f64,
+                clear_color_linear[3] as f64,
+            ],
             input_queue: InputQueue::new(),
             brush_state: BrushState::new(),
         }

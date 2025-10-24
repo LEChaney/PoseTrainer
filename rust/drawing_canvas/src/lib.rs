@@ -9,6 +9,7 @@
 
 mod app;
 mod brush;
+mod color;
 pub mod debug;
 mod input;
 mod renderer;

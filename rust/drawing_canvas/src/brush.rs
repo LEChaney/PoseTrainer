@@ -50,12 +50,21 @@ impl BrushParams {
 
 impl Default for BrushParams {
     fn default() -> Self {
+        // Flutter colors are in sRGB space, convert to linear for rendering
         Self {
-            size: 10.0,
-            flow: 0.8,
+            // Match Flutter effective defaults:
+            // maxSizePx * runtimeSizeScale = 100 * 0.75 = 75
+            size: 75.0,
+            // Flutter effective flow ~0.3 (maxFlow * runtimeFlowScale with formula)
+            flow: 0.3,
+            // Hardness matches
             hardness: 1.0,
-            spacing: 1.0,
-            color: [1.0, 0.0, 0.0, 1.0], // Red
+            // Flutter spacing: 0.01 clamped to 0.05 minimum, as fraction of diameter
+            // 0.05 * 75 = 3.75 pixels
+            spacing: 3.75,
+            // Flutter brush color: kBrushDarkDefault (#A302DE = RGB 163, 2, 222)
+            // Convert from sRGB to linear RGBA for correct blending
+            color: crate::color::srgb_u8_to_linear_f32(163, 2, 222, 1.0),
         }
     }
 }
