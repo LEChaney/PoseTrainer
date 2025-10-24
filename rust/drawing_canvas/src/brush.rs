@@ -16,6 +16,8 @@ pub struct BrushParams {
     pub spacing: f32,
     /// Brush color in linear RGBA (0.0-1.0)
     pub color: [f32; 4],
+    /// How pressure affects the brush
+    pub pressure_mapping: PressureMapping,
 }
 
 impl BrushParams {
@@ -27,6 +29,7 @@ impl BrushParams {
             hardness,
             spacing,
             color,
+            pressure_mapping: PressureMapping::default(),
         }
     }
 
@@ -65,6 +68,8 @@ impl Default for BrushParams {
             // Flutter brush color: kBrushDarkDefault (#A302DE = RGB 163, 2, 222)
             // Convert from sRGB to linear RGBA for correct blending
             color: crate::color::srgb_u8_to_linear_f32(163, 2, 222, 1.0),
+            // Flutter pressure mapping on flow
+            pressure_mapping: PressureMapping::Flow,
         }
     }
 }
@@ -107,8 +112,6 @@ impl Default for PressureMapping {
 pub struct BrushState {
     /// Current brush parameters
     pub params: BrushParams,
-    /// How pressure affects the brush
-    pub pressure_mapping: PressureMapping,
     /// Last input position (not dab position) for segment calculation
     last_dab_position: Option<[f32; 2]>,
     /// Last pressure value (for interpolation)
@@ -122,7 +125,6 @@ impl BrushState {
     pub fn new() -> Self {
         Self {
             params: BrushParams::default(),
-            pressure_mapping: PressureMapping::default(),
             last_dab_position: None,
             last_dab_pressure: 1.0,
             has_moved: false,
@@ -133,7 +135,6 @@ impl BrushState {
     pub fn with_params(params: BrushParams) -> Self {
         Self {
             params,
-            pressure_mapping: PressureMapping::default(),
             last_dab_position: None,
             last_dab_pressure: 1.0,
             has_moved: false,
@@ -212,7 +213,7 @@ impl BrushState {
 
     /// Create a single dab with pressure applied
     fn create_dab(&self, position: [f32; 2], pressure: f32) -> BrushDab {
-        let (size, opacity) = match self.pressure_mapping {
+        let (size, opacity) = match self.params.pressure_mapping {
             PressureMapping::Flow => {
                 (self.params.size, self.params.flow * pressure)
             }
