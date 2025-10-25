@@ -36,7 +36,15 @@ pub fn init_panic_hook() {
 pub fn init_logging() {
     // Try to initialize logger, but don't panic if it's already initialized
     // This allows multiple drawing canvas instances or reinitialization
-    let _ = console_log::init_with_level(log::Level::Debug);
+    
+    // Use Error level in release builds to suppress verbose debug/info logs
+    // Use Debug level in debug builds for development
+    #[cfg(debug_assertions)]
+    let log_level = log::Level::Debug;
+    #[cfg(not(debug_assertions))]
+    let log_level = log::Level::Error;
+    
+    let _ = console_log::init_with_level(log_level);
 }
 
 /// Initialize the WASM drawing canvas

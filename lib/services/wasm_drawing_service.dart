@@ -292,16 +292,21 @@ Future<void> _importWasmModule() async {
   script.textContent = '''
     // Set up debug function stubs for WASM module
     // These are called by the Rust code but we just log them in Flutter
+    // Only log in debug mode (check if origin is localhost or contains 'debug')
+    const isDebug = window.location.hostname === 'localhost' || 
+                    window.location.hostname === '127.0.0.1' ||
+                    window.location.search.includes('debug=true');
+    
     window.updateDebugStatus = function(status) {
-      console.log('[WASM Debug] Status:', status);
+      if (isDebug) console.log('[WASM Debug] Status:', status);
     };
     
     window.updateDebugStage = function(stage) {
-      console.log('[WASM Debug] Stage:', stage);
+      if (isDebug) console.log('[WASM Debug] Stage:', stage);
     };
     
     window.updateDebugPointer = function(type, x, y, pressure, tilt_x, tilt_y, azimuth, twist) {
-      console.log('[WASM Debug] Pointer:', {type, x, y, pressure, tilt_x, tilt_y, azimuth, twist});
+      if (isDebug) console.log('[WASM Debug] Pointer:', {type, x, y, pressure, tilt_x, tilt_y, azimuth, twist});
     };
     
     window.incrementFrameCount = function() {

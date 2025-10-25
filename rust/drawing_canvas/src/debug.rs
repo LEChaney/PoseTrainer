@@ -3,29 +3,46 @@
 //! Provides functions to update the on-screen debug display
 //! for tracking initialization stages and pointer input data.
 
-#[cfg(target_arch = "wasm32")]
+// Only import wasm_bindgen in debug builds where it's actually used
+#[cfg(all(target_arch = "wasm32", debug_assertions))]
 use wasm_bindgen::prelude::*;
 
 /// Update the debug status line
 #[cfg(target_arch = "wasm32")]
 pub fn update_status(status: &str) {
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_name = updateDebugStatus)]
-        fn update_debug_status(status: &str);
+    // Only call JS debug functions in debug builds
+    #[cfg(debug_assertions)]
+    {
+        #[wasm_bindgen]
+        extern "C" {
+            #[wasm_bindgen(js_name = updateDebugStatus)]
+            fn update_debug_status(status: &str);
+        }
+        update_debug_status(status);
     }
-    update_debug_status(status);
+    
+    // Silence unused variable warning in release builds
+    #[cfg(not(debug_assertions))]
+    let _ = status;
 }
 
 /// Update the current stage indicator
 #[cfg(target_arch = "wasm32")]
 pub fn update_stage(stage: &str) {
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_name = updateDebugStage)]
-        fn update_debug_stage(stage: &str);
+    // Only call JS debug functions in debug builds
+    #[cfg(debug_assertions)]
+    {
+        #[wasm_bindgen]
+        extern "C" {
+            #[wasm_bindgen(js_name = updateDebugStage)]
+            fn update_debug_stage(stage: &str);
+        }
+        update_debug_stage(stage);
     }
-    update_debug_stage(stage);
+    
+    // Silence unused variable warning in release builds
+    #[cfg(not(debug_assertions))]
+    let _ = stage;
 }
 
 /// Update pointer information in the debug overlay
@@ -39,34 +56,48 @@ pub fn update_pointer(
     azimuth: Option<f32>,
     twist: Option<f32>,
 ) {
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_name = updateDebugPointer)]
-        fn update_debug_pointer(
-            ptr_type: &str,
-            x: Option<f32>,
-            y: Option<f32>,
-            pressure: Option<f32>,
-            tilt_x: Option<f32>,
-            tilt_y: Option<f32>,
-            azimuth: Option<f32>,
-            twist: Option<f32>,
-        );
+    // Only call JS debug functions in debug builds
+    #[cfg(debug_assertions)]
+    {
+        #[wasm_bindgen]
+        extern "C" {
+            #[wasm_bindgen(js_name = updateDebugPointer)]
+            fn update_debug_pointer(
+                ptr_type: &str,
+                x: Option<f32>,
+                y: Option<f32>,
+                pressure: Option<f32>,
+                tilt_x: Option<f32>,
+                tilt_y: Option<f32>,
+                azimuth: Option<f32>,
+                twist: Option<f32>,
+            );
+        }
+        
+        let (tilt_x, tilt_y) = tilt.map(|t| (Some(t[0]), Some(t[1]))).unwrap_or((None, None));
+        update_debug_pointer(ptr_type, x, y, pressure, tilt_x, tilt_y, azimuth, twist);
     }
     
-    let (tilt_x, tilt_y) = tilt.map(|t| (Some(t[0]), Some(t[1]))).unwrap_or((None, None));
-    update_debug_pointer(ptr_type, x, y, pressure, tilt_x, tilt_y, azimuth, twist);
+    // Silence unused variable warnings in release builds
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (ptr_type, x, y, pressure, tilt, azimuth, twist);
+    }
 }
 
 /// Increment the frame counter
 #[cfg(target_arch = "wasm32")]
 pub fn increment_frame_count() {
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_name = incrementFrameCount)]
-        fn increment_frame_count_js();
+    // Only call JS debug functions in debug builds
+    #[cfg(debug_assertions)]
+    {
+        #[wasm_bindgen]
+        extern "C" {
+            #[wasm_bindgen(js_name = incrementFrameCount)]
+            fn increment_frame_count_js();
+        }
+        increment_frame_count_js();
     }
-    increment_frame_count_js();
 }
 
 // No-op versions for non-WASM platforms
