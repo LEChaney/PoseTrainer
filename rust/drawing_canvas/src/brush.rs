@@ -14,7 +14,8 @@ pub struct BrushParams {
     pub hardness: f32,
     /// Spacing between dabs in pixels
     pub spacing: f32,
-    /// Brush color in linear RGBA (0.0-1.0)
+    /// Brush color in sRGB RGBA (0.0-1.0)
+    /// Will be converted to linear at render time if needed
     pub color: [f32; 4],
     /// How pressure affects the brush
     pub pressure_mapping: PressureMapping,
@@ -53,7 +54,6 @@ impl BrushParams {
 
 impl Default for BrushParams {
     fn default() -> Self {
-        // Flutter colors are in sRGB space, convert to linear for rendering
         Self {
             // Match Flutter effective defaults:
             // maxSizePx * runtimeSizeScale = 100 * 0.75 = 75
@@ -66,8 +66,8 @@ impl Default for BrushParams {
             // 0.05 * 75 = 3.75 pixels
             spacing: 3.75,
             // Flutter brush color: kBrushDarkDefault (#A302DE = RGB 163, 2, 222)
-            // Convert from sRGB to linear RGBA for correct blending
-            color: crate::color::srgb_u8_to_linear_f32(163, 2, 222, 1.0),
+            // Store in sRGB space - will be converted to linear at render time if needed
+            color: [163.0 / 255.0, 2.0 / 255.0, 222.0 / 255.0, 1.0],
             // Flutter pressure mapping on flow
             pressure_mapping: PressureMapping::Flow,
         }
@@ -83,7 +83,7 @@ pub struct BrushDab {
     pub size: f32,
     /// Opacity for this dab (0.0-1.0)
     pub opacity: f32,
-    /// Color in linear RGBA
+    /// Color in sRGB RGBA (will be converted by renderer based on blend mode)
     pub color: [f32; 4],
     /// Hardness (0.0-1.0)
     pub hardness: f32,

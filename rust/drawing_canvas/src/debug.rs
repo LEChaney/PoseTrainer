@@ -89,3 +89,22 @@ pub fn update_pointer(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn increment_frame_count() {}
+
+/// Check if sRGB blend mode is enabled (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn is_srgb_blend_mode() -> bool {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return false,
+    };
+
+    let js_val = js_sys::Reflect::get(&window, &wasm_bindgen::JsValue::from_str("blendColorSpaceIsSrgb"))
+        .unwrap_or(wasm_bindgen::JsValue::FALSE);
+    
+    js_val.as_bool().unwrap_or(false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_srgb_blend_mode() -> bool {
+    false
+}

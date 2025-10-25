@@ -7,7 +7,6 @@
 use crate::brush::BrushState;
 use crate::input::{InputQueue, PointerEvent};
 use crate::renderer::Renderer;
-use crate::color;
 
 /// Main application state
 pub struct App {
@@ -23,16 +22,8 @@ impl App {
     /// Create a new application with default state
     pub fn new() -> Self {
         // Flutter's kPaperColor: #F4F3EF (warm off-white drawing surface) in sRGB
-        // Convert to linear space for correct rendering
-        let clear_color_linear = color::srgb_u8_to_linear_f32(244, 243, 239, 1.0);
-        
         Self {
-            clear_color: [
-                clear_color_linear[0] as f64,
-                clear_color_linear[1] as f64,
-                clear_color_linear[2] as f64,
-                clear_color_linear[3] as f64,
-            ],
+            clear_color: [255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0],
             input_queue: InputQueue::new(),
             brush_state: BrushState::new(),
         }
@@ -59,7 +50,7 @@ impl App {
 
     /// Clear the canvas
     pub fn clear_canvas(&mut self, renderer: &mut Renderer) {
-        renderer.clear_canvas(self.clear_color);
+        renderer.clear_canvas(&self.clear_color);
     }
 
     /// Set the clear color
@@ -90,6 +81,19 @@ impl App {
     /// Get reference to brush state
     pub fn brush_state(&self) -> &BrushState {
         &self.brush_state
+    }
+
+    /// Set the blend mode
+    pub fn set_blend_color_space(&mut self, color_space: crate::renderer::BlendColorSpace, renderer: &mut Renderer) {
+        renderer.set_blend_color_space(color_space);
+        // Clear canvas when switching modes to start fresh
+        self.clear_canvas(renderer);
+        log::info!("App blend color space changed to: {:?}", color_space);
+    }
+
+    /// Get the current blend mode from the renderer
+    pub fn blend_color_space(&self, renderer: &Renderer) -> crate::renderer::BlendColorSpace {
+        renderer.blend_color_space()
     }
 
     /// Process input events and generate brush dabs

@@ -11,6 +11,56 @@ use winit::event::{WindowEvent, ElementState, Force};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
 
+#[cfg(target_arch = "wasm32")]
+use std::cell::RefCell;
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static GLOBAL_APP_WRAPPER: RefCell<Option<*mut AppWrapper>> = RefCell::new(None);
+}
+
+/// Set the global app wrapper reference (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn set_global_app_wrapper(wrapper: &mut AppWrapper) {
+    GLOBAL_APP_WRAPPER.with(|global| {
+        *global.borrow_mut() = Some(wrapper as *mut AppWrapper);
+    });
+}
+
+/// Set blend color space from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn set_blend_color_space_global(is_srgb: bool) {
+    use crate::renderer::BlendColorSpace;
+    
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &mut *wrapper_ptr;
+                if let (Some(app), Some(renderer)) = (&mut wrapper.app, &mut wrapper.renderer) {
+                    let color_space = if is_srgb {
+                        BlendColorSpace::Srgb
+                    } else {
+                        BlendColorSpace::Linear
+                    };
+                    
+                    app.set_blend_color_space(color_space, renderer);
+                    
+                    // Request a redraw
+                    if let Some(window) = &wrapper.window {
+                        window.request_redraw();
+                    }
+                    
+                    log::info!("✅ Blend color space changed to: {:?}", color_space);
+                } else {
+                    log::warn!("App or renderer not yet initialized");
+                }
+            }
+        } else {
+            log::warn!("Global app wrapper not set");
+        }
+    });
+}
+
 /// Wrapper for the application window and state
 pub struct AppWrapper {
     pub window: Option<std::sync::Arc<Box<dyn Window>>>,

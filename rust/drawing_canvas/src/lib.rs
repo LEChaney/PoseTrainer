@@ -18,7 +18,7 @@ mod window;
 pub use app::App;
 pub use brush::{BrushDab, BrushParams, BrushState, PressureMapping};
 pub use input::{InputQueue, PointerEvent, PointerEventType};
-pub use renderer::Renderer;
+pub use renderer::{BlendColorSpace, Renderer};
 pub use window::AppWrapper;
 
 // Re-export for WASM builds
@@ -61,7 +61,20 @@ fn run_event_loop() {
     
     let mut app_wrapper = AppWrapper::new();
     
+    // Store reference for JS callbacks
+    window::set_global_app_wrapper(&mut app_wrapper);
+    
     let _ = event_loop.run_app(&mut app_wrapper);
+}
+
+/// Set the blend color space from JavaScript
+/// 
+/// # Arguments
+/// * `is_srgb` - true for sRGB gamma-space blending, false for linear blending
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn set_blend_color_space(is_srgb: bool) {
+    window::set_blend_color_space_global(is_srgb);
 }
 
 // Future: FFI exports for Flutter integration

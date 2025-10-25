@@ -7,16 +7,33 @@ use wgpu;
 use wgpu::util::DeviceExt;
 use crate::brush::BrushDab;
 
+/// Color blending mode for brush strokes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlendColorSpace {
+    /// Blend in linear color space (physically correct)
+    Linear,
+    /// Blend in sRGB/gamma space (matches Procreate/CSP)
+    Srgb,
+}
+
 /// Uniforms for brush shader (canvas size)
-#[repr(C)]
+#[repr(C, align(16))]  // Force 16-byte alignment for WebGL compatibility
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct BrushUniforms {
     canvas_size: [f32; 2],
     _padding: [f32; 2],  // Align to 16 bytes
 }
 
+/// Uniforms for blit shader (blend mode)
+#[repr(C, align(16))]  // Force 16-byte alignment for WebGL compatibility
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct BlitUniforms {
+    blend_mode: u32,  // 0 = Linear, 1 = sRGB
+    _padding: [u32; 3],  // Align to 16 bytes
+}
+
 /// Vertex data for a single brush dab instance
-#[repr(C)]
+#[repr(C, align(16))]  // Force 16-byte alignment for WebGL compatibility
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct DabInstance {
     position: [f32; 2],
@@ -27,19 +44,6 @@ struct DabInstance {
     _padding: [f32; 3],  // Align to 16 bytes
 }
 
-impl From<BrushDab> for DabInstance {
-    fn from(dab: BrushDab) -> Self {
-        Self {
-            position: dab.position,
-            size: dab.size,
-            opacity: dab.opacity,
-            color: dab.color,
-            hardness: dab.hardness,
-            _padding: [0.0; 3],
-        }
-    }
-}
-
 /// Renderer wraps the wgpu device, queue, and surface
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -48,10 +52,11 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     max_texture_dimension: u32,
-    canvas_format: wgpu::TextureFormat,  // Canvas uses linear format for correct alpha blending
+    canvas_format: wgpu::TextureFormat, // Current canvas texture format
+    blend_color_space: BlendColorSpace,  // Current blending mode
     
-    // Brush rendering pipeline
-    brush_pipeline: wgpu::RenderPipeline,
+    // Brush rendering pipelines (one for each target format)
+    brush_pipeline: wgpu::RenderPipeline,  // For rendering to canvas
     brush_uniform_buffer: wgpu::Buffer,
     brush_bind_group: wgpu::BindGroup,
     
@@ -61,6 +66,7 @@ pub struct Renderer {
     
     // Blit pipeline for copying canvas to surface
     blit_pipeline: wgpu::RenderPipeline,
+    blit_uniform_buffer: wgpu::Buffer,
     blit_bind_group: wgpu::BindGroup,
     canvas_sampler: wgpu::Sampler,
 }
@@ -170,19 +176,9 @@ impl Renderer {
             .unwrap_or(surface_caps.formats[0]);
         
         log::info!("Selected surface format: {:?}", surface_format);
-        
-        // Canvas texture uses LINEAR format for correct alpha blending
-        // wgpu will automatically convert linear → sRGB for sRGB surface formats
-        let canvas_format = match surface_format {
-            wgpu::TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8Unorm,
-            wgpu::TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
-            _ => {
-                log::warn!("Unexpected surface format {:?}, assuming linear equivalent exists", surface_format);
-                surface_format
-            }
-        };
-        
-        log::info!("Canvas texture format: {:?} (linear for correct blending)", canvas_format);
+
+        let canvas_format = wgpu::TextureFormat::Rgba16Float;
+        log::info!("Canvas texture format: {:?}", canvas_format);
 
         // Clamp size to max texture dimension to avoid WebGL limits
         let clamped_width = size.width.min(max_texture_dimension);
@@ -219,10 +215,10 @@ impl Renderer {
                    size.width, size.height, surface_format, canvas_format);
         crate::debug::update_status("✅ Renderer complete!");
 
-        // Initialize brush rendering pipeline (renders to linear canvas)
+        // Create brush rendering pipelines for both linear canvas and sRGB surface
         let brush_pipeline = Self::create_brush_pipeline(&device, canvas_format);
-        log::info!("✅ Brush pipeline created");
-        
+        log::info!("✅ Brush pipeline created for format: {:?}", canvas_format);
+
         // Create uniform buffer for canvas size
         let brush_uniforms = BrushUniforms {
             canvas_size: [clamped_width as f32, clamped_height as f32],
@@ -234,7 +230,7 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         
-        // Create bind group for uniforms
+        // Create bind group for uniforms (both pipelines share the same layout)
         let brush_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Brush Bind Group"),
             layout: &brush_pipeline.get_bind_group_layout(0),
@@ -251,7 +247,7 @@ impl Renderer {
             clamped_height,
             canvas_format,
         );
-        log::info!("✅ Canvas texture created: {}x{}", clamped_width, clamped_height);
+        log::info!("✅ Canvas texture created: {}x{}, format: {:?}", clamped_width, clamped_height, canvas_format);
 
         // Create blit pipeline for copying canvas to surface (handles color space conversion)
         let (blit_pipeline, blit_bind_group_layout) = Self::create_blit_pipeline(&device, surface_format);
@@ -269,6 +265,22 @@ impl Renderer {
             ..Default::default()
         });
         
+        // Create blit uniform buffer (blend mode)
+        // TODO: Set blend mode on app initialization and plumb through here
+        let blend_color_space = BlendColorSpace::Srgb; // Default to sRGB blending
+        let blit_uniforms = BlitUniforms {
+            blend_mode: match blend_color_space {
+                BlendColorSpace::Linear => 0,
+                BlendColorSpace::Srgb => 1,
+            },
+            _padding: [0; 3],
+        };
+        let blit_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Blit Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[blit_uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
         // Create bind group for blit pipeline
         let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Blit Bind Group"),
@@ -282,6 +294,10 @@ impl Renderer {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&canvas_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: blit_uniform_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -293,12 +309,14 @@ impl Renderer {
             size,
             max_texture_dimension,
             canvas_format,
+            blend_color_space: blend_color_space,
             brush_pipeline,
             brush_uniform_buffer,
             brush_bind_group,
             canvas_texture,
             canvas_view,
             blit_pipeline,
+            blit_uniform_buffer,
             blit_bind_group,
             canvas_sampler,
         }
@@ -450,6 +468,28 @@ impl Renderer {
         (texture, view)
     }
 
+    /// Recreate the blit bind group with current canvas view and uniform buffer
+    fn recreate_blit_bind_group(&mut self) {
+        self.blit_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Blit Bind Group"),
+            layout: &self.blit_pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.canvas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.canvas_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.blit_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+    }
+
     /// Create the blit pipeline for copying canvas to surface
     fn create_blit_pipeline(
         device: &wgpu::Device,
@@ -461,7 +501,7 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
         });
         
-        // Create bind group layout for texture and sampler
+        // Create bind group layout for texture, sampler, and uniforms
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Blit Bind Group Layout"),
             entries: &[
@@ -479,6 +519,16 @@ impl Renderer {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -547,8 +597,8 @@ impl Renderer {
             self.config.width = clamped_width;
             self.config.height = clamped_height;
             self.surface.configure(&self.device, &self.config);
-            
-            // Recreate canvas texture with new size (uses stored canvas_format)
+
+            // Recreate canvas texture with new size
             let (canvas_texture, canvas_view) = Self::create_canvas_texture(
                 &self.device,
                 clamped_width,
@@ -559,21 +609,7 @@ impl Renderer {
             self.canvas_view = canvas_view;
             
             // Recreate blit bind group with new canvas view
-            let blit_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Blit Bind Group"),
-                layout: &self.blit_pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.canvas_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.canvas_sampler),
-                    },
-                ],
-            });
-            self.blit_bind_group = blit_bind_group;
+            self.recreate_blit_bind_group();
             
             // Update uniform buffer with new canvas size
             let brush_uniforms = BrushUniforms {
@@ -585,8 +621,8 @@ impl Renderer {
                 0,
                 bytemuck::cast_slice(&[brush_uniforms]),
             );
-            
-            log::debug!("Surface and canvas resized to: {}x{}", clamped_width, clamped_height);
+
+            log::debug!("Surface and canvas resized to: {}x{}, format: {:?}", clamped_width, clamped_height, self.canvas_format);
         }
     }
 
@@ -597,7 +633,23 @@ impl Renderer {
         }
         
         // Convert dabs to instance data
-        let instances: Vec<DabInstance> = dabs.iter().map(|&dab| dab.into()).collect();
+        // Brush colors are stored in sRGB in BrushDab, always convert to linear for shader
+        let instances: Vec<DabInstance> = dabs.iter().map(|&dab| {
+            // Always convert sRGB brush color to linear for shader math
+            let color = match self.blend_color_space {
+                BlendColorSpace::Linear => crate::color::srgb_to_linear_rgba(dab.color),
+                BlendColorSpace::Srgb => dab.color,  // sRGB blending uses sRGB colors directly
+            };
+            
+            DabInstance {
+                position: dab.position,
+                size: dab.size,
+                opacity: dab.opacity,
+                color,
+                hardness: dab.hardness,
+                _padding: [0.0; 3],
+            }
+        }).collect();
         
         // Create instance buffer
         let instance_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -703,7 +755,12 @@ impl Renderer {
     }
 
     /// Clear the canvas to a color
-    pub fn clear_canvas(&mut self, clear_color: [f64; 4]) {
+    pub fn clear_canvas(&self, clear_color: &[f64; 4]) {
+        let clear_color = match self.blend_color_space {
+            BlendColorSpace::Linear => crate::color::srgb_to_linear_rgba_f64(clear_color),
+            BlendColorSpace::Srgb => *clear_color,
+        };
+
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Clear Canvas Encoder"),
         });
@@ -738,5 +795,34 @@ impl Renderer {
     /// Get the current surface size
     pub fn size(&self) -> winit::dpi::PhysicalSize<u32> {
         self.size
+    }
+
+    /// Get the current blend color space
+    pub fn blend_color_space(&self) -> BlendColorSpace {
+        self.blend_color_space
+    }
+
+    /// Set the blend color space
+    pub fn set_blend_color_space(&mut self, color_space: BlendColorSpace) {
+        if self.blend_color_space == color_space {
+            return;
+        }
+
+        log::info!("Switching blend color space from {:?} to {:?}", self.blend_color_space, color_space);
+        self.blend_color_space = color_space;
+
+        // Update uniform buffer with new blend mode value
+        let blit_uniforms = BlitUniforms {
+            blend_mode: match self.blend_color_space {
+                BlendColorSpace::Linear => 0,
+                BlendColorSpace::Srgb => 1,
+            },
+            _padding: [0; 3],
+        };
+        self.queue.write_buffer(
+            &self.blit_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[blit_uniforms]),
+        );
     }
 }

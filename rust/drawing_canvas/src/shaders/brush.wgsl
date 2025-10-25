@@ -6,7 +6,7 @@ struct VertexInput {
     @location(0) dab_position: vec2<f32>,  // Center position of dab in pixels
     @location(1) dab_size: f32,            // Diameter in pixels
     @location(2) dab_opacity: f32,         // Opacity (0.0-1.0)
-    @location(3) dab_color: vec4<f32>,     // Linear RGBA color
+    @location(3) dab_color: vec4<f32>,     // RGBA color
     @location(4) dab_hardness: f32,        // Edge hardness (0.0-1.0)
 }
 

@@ -46,7 +46,7 @@ pub fn srgb_to_linear_rgba(srgb: [f32; 4]) -> [f32; 4] {
 /// Color in linear space [r, g, b, a] where all components are linear
 #[allow(dead_code)]
 #[inline]
-pub fn srgb_to_linear_rgba_f64(srgb: [f64; 4]) -> [f64; 4] {
+pub fn srgb_to_linear_rgba_f64(srgb: &[f64; 4]) -> [f64; 4] {
     [
         srgb_to_linear(srgb[0] as f32) as f64,
         srgb_to_linear(srgb[1] as f32) as f64,
@@ -63,6 +63,8 @@ pub fn srgb_to_linear_rgba_f64(srgb: [f64; 4]) -> [f64; 4] {
 /// 
 /// # Returns
 /// Color in linear space [r, g, b, a] where all values are 0.0-1.0
+/// #[allow(dead_code)]
+#[allow(dead_code)]
 #[inline]
 pub fn srgb_u8_to_linear_f32(r: u8, g: u8, b: u8, a: f32) -> [f32; 4] {
     srgb_to_linear_rgba([
