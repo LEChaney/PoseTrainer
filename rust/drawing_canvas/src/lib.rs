@@ -34,22 +34,45 @@ pub fn init_panic_hook() {
 /// Initialize logging for WASM (logs go to browser console)
 #[cfg(target_arch = "wasm32")]
 pub fn init_logging() {
-    console_log::init_with_level(log::Level::Debug).expect("Failed to initialize logger");
+    // Try to initialize logger, but don't panic if it's already initialized
+    // This allows multiple drawing canvas instances or reinitialization
+    let _ = console_log::init_with_level(log::Level::Debug);
 }
 
-/// WASM entry point - called when the module is loaded
+/// Initialize the WASM drawing canvas
+/// Call this explicitly from JavaScript when you're ready to start the canvas
+/// This can be called multiple times - only the event loop will be created once,
+/// but new canvas instances will be created each time
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn wasm_start() {
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn init_drawing_canvas() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    
+    // One-time initialization (event loop, panic hook, logger)
+    // These should only be initialized once per page load
+    static EVENT_LOOP_STARTED: AtomicBool = AtomicBool::new(false);
+    
+    // Always initialize panic hook and logger (they're idempotent)
     init_panic_hook();
     init_logging();
     
-    log::info!("🚀 Drawing Canvas WASM module started");
-    
-    // Spawn the event loop
-    wasm_bindgen_futures::spawn_local(async {
-        run_event_loop();
-    });
+    // Only start the event loop once
+    if !EVENT_LOOP_STARTED.swap(true, Ordering::SeqCst) {
+        log::info!("🚀 Drawing Canvas WASM module initializing (first time)");
+        
+        // Spawn the event loop
+        wasm_bindgen_futures::spawn_local(async {
+            run_event_loop();
+        });
+        
+        log::info!("✅ Drawing Canvas event loop spawned");
+    } else {
+        log::info!("🔄 Drawing Canvas reinitialized (reusing existing event loop)");
+        
+        // Check if we need to relocate the canvas to a new container
+        // This handles Flutter rebuilding the widget tree (layout changes, navigation, etc.)
+        window::check_and_relocate_canvas_global();
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -75,6 +98,63 @@ fn run_event_loop() {
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn set_blend_color_space(is_srgb: bool) {
     window::set_blend_color_space_global(is_srgb);
+}
+
+/// Set brush size (diameter in pixels)
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn set_brush_size(size: f32) {
+    window::set_brush_size_global(size);
+}
+
+/// Set brush flow/opacity per dab (0.0-1.0)
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn set_brush_flow(flow: f32) {
+    window::set_brush_flow_global(flow);
+}
+
+/// Set brush edge hardness (0.0=soft, 1.0=hard)
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn set_brush_hardness(hardness: f32) {
+    window::set_brush_hardness_global(hardness);
+}
+
+/// Set brush color (sRGB values 0.0-1.0)
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn set_brush_color(r: f32, g: f32, b: f32, a: f32) {
+    window::set_brush_color_global(r, g, b, a);
+}
+
+/// Clear the canvas to the current clear color
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn clear_canvas() {
+    window::clear_canvas_global();
+}
+
+/// Get canvas width in pixels
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn get_canvas_width() -> u32 {
+    window::get_canvas_width_global()
+}
+
+/// Get canvas height in pixels
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn get_canvas_height() -> u32 {
+    window::get_canvas_height_global()
+}
+
+/// Export canvas as RGBA8 image data
+/// Returns a Uint8ClampedArray containing RGBA pixel data (width * height * 4 bytes)
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub async fn get_canvas_image_data() -> Result<js_sys::Uint8ClampedArray, wasm_bindgen::JsValue> {
+    window::get_canvas_image_data_global().await
 }
 
 // Future: FFI exports for Flutter integration

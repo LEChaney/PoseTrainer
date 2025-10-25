@@ -13,10 +13,39 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static GLOBAL_APP_WRAPPER: RefCell<Option<*mut AppWrapper>> = RefCell::new(None);
+}
+
+// Global brush parameters that persist across app reinitialization
+// This is separate from App state so settings don't get reset when canvas is recreated
+static GLOBAL_BRUSH_PARAMS: OnceLock<Mutex<crate::brush::BrushParams>> = OnceLock::new();
+
+/// Initialize global brush params if not already initialized
+fn ensure_global_brush_params() -> &'static Mutex<crate::brush::BrushParams> {
+    GLOBAL_BRUSH_PARAMS.get_or_init(|| {
+        log::info!("Initializing global brush params with defaults");
+        Mutex::new(crate::brush::BrushParams::default())
+    })
+}
+
+/// Get the current global brush parameters (thread-safe)
+fn get_global_brush_params() -> crate::brush::BrushParams {
+    *ensure_global_brush_params().lock().unwrap()
+}
+
+/// Update global brush parameters (thread-safe)
+fn update_global_brush_params<F>(updater: F)
+where
+    F: FnOnce(&mut crate::brush::BrushParams),
+{
+    let mut params = ensure_global_brush_params().lock().unwrap();
+    updater(&mut *params);
+    log::info!("Global brush params updated: size={}, flow={}, hardness={}", 
+               params.size, params.flow, params.hardness);
 }
 
 /// Set the global app wrapper reference (WASM only)
@@ -53,6 +82,304 @@ pub fn set_blend_color_space_global(is_srgb: bool) {
                     log::info!("✅ Blend color space changed to: {:?}", color_space);
                 } else {
                     log::warn!("App or renderer not yet initialized");
+                }
+            }
+        } else {
+            log::warn!("Global app wrapper not set");
+        }
+    });
+}
+
+/// Set brush size from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn set_brush_size_global(size: f32) {
+    log::info!("set_brush_size_global called: {}", size);
+    
+    // Update global brush params (persists across app reinit)
+    update_global_brush_params(|params| {
+        params.size = size.max(0.1);
+    });
+    
+    // Also update current app if it exists
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &mut *wrapper_ptr;
+                if let Some(app) = &mut wrapper.app {
+                    app.brush_state_mut().params.size = size.max(0.1);
+                    log::info!("Updated app brush size to: {}", size);
+                }
+            }
+        }
+    });
+}
+
+/// Set brush flow from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn set_brush_flow_global(flow: f32) {
+    log::info!("set_brush_flow_global called: {}", flow);
+    
+    // Update global brush params (persists across app reinit)
+    update_global_brush_params(|params| {
+        params.flow = flow.clamp(0.0, 1.0);
+    });
+    
+    // Also update current app if it exists
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &mut *wrapper_ptr;
+                if let Some(app) = &mut wrapper.app {
+                    app.brush_state_mut().params.flow = flow.clamp(0.0, 1.0);
+                    log::info!("Updated app brush flow to: {}", flow);
+                }
+            }
+        }
+    });
+}
+
+/// Set brush hardness from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn set_brush_hardness_global(hardness: f32) {
+    log::info!("set_brush_hardness_global called: {}", hardness);
+    
+    // Update global brush params (persists across app reinit)
+    update_global_brush_params(|params| {
+        params.hardness = hardness.clamp(0.0, 1.0);
+    });
+    
+    // Also update current app if it exists
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &mut *wrapper_ptr;
+                if let Some(app) = &mut wrapper.app {
+                    app.brush_state_mut().params.hardness = hardness.clamp(0.0, 1.0);
+                    log::info!("Updated app brush hardness to: {}", hardness);
+                }
+            }
+        }
+    });
+}
+
+/// Set brush color from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn set_brush_color_global(r: f32, g: f32, b: f32, a: f32) {
+    log::info!("set_brush_color_global called: [{}, {}, {}, {}]", r, g, b, a);
+    
+    // Update global brush params (persists across app reinit)
+    update_global_brush_params(|params| {
+        params.color = [
+            r.clamp(0.0, 1.0),
+            g.clamp(0.0, 1.0),
+            b.clamp(0.0, 1.0),
+            a.clamp(0.0, 1.0),
+        ];
+    });
+    
+    // Also update current app if it exists
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &mut *wrapper_ptr;
+                if let Some(app) = &mut wrapper.app {
+                    app.brush_state_mut().params.color = [
+                        r.clamp(0.0, 1.0),
+                        g.clamp(0.0, 1.0),
+                        b.clamp(0.0, 1.0),
+                        a.clamp(0.0, 1.0),
+                    ];
+                    log::info!("Updated app brush color to: [{}, {}, {}, {}]", r, g, b, a);
+                }
+            }
+        }
+    });
+}
+
+/// Clear canvas from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn clear_canvas_global() {
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &mut *wrapper_ptr;
+                if let (Some(app), Some(renderer)) = (&mut wrapper.app, &mut wrapper.renderer) {
+                    app.clear_canvas(renderer);
+                    
+                    // Request a redraw
+                    if let Some(window) = &wrapper.window {
+                        window.request_redraw();
+                    }
+                    
+                    log::info!("Canvas cleared");
+                } else {
+                    log::warn!("App or renderer not yet initialized");
+                }
+            }
+        } else {
+            log::warn!("Global app wrapper not set");
+        }
+    });
+}
+
+/// Get canvas width from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn get_canvas_width_global() -> u32 {
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &*wrapper_ptr;
+                if let Some(renderer) = &wrapper.renderer {
+                    renderer.size().width
+                } else {
+                    0
+                }
+            }
+        } else {
+            0
+        }
+    })
+}
+
+/// Get canvas height from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn get_canvas_height_global() -> u32 {
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &*wrapper_ptr;
+                if let Some(renderer) = &wrapper.renderer {
+                    renderer.size().height
+                } else {
+                    0
+                }
+            }
+        } else {
+            0
+        }
+    })
+}
+
+/// Export canvas as RGBA8 image data from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub async fn get_canvas_image_data_global() -> Result<js_sys::Uint8ClampedArray, wasm_bindgen::JsValue> {
+    use wasm_bindgen::JsValue;
+    
+    // Read back GPU texture data - this is async and requires waiting for GPU->CPU transfer
+    let result = GLOBAL_APP_WRAPPER.with(|global| -> Option<*mut Renderer> {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &mut *wrapper_ptr;
+                wrapper.renderer.as_mut().map(|r| r as *mut Renderer)
+            }
+        } else {
+            None
+        }
+    });
+    
+    match result {
+        Some(renderer_ptr) => {
+            // Call async method outside the closure to avoid borrow issues
+            let renderer = unsafe { &*renderer_ptr };
+            let rgba8_data = renderer.read_canvas_rgba8()
+                .await
+                .map_err(|e| JsValue::from_str(&e))?;
+            
+            // Convert Vec<u8> to Uint8ClampedArray for JavaScript
+            let js_array = js_sys::Uint8ClampedArray::new_with_length(rgba8_data.len() as u32);
+            js_array.copy_from(&rgba8_data);
+            
+            log::info!("Exported canvas image data: {} bytes", rgba8_data.len());
+            Ok(js_array)
+        }
+        None => Err(JsValue::from_str("Renderer not yet initialized"))
+    }
+}
+
+/// Check if canvas needs to be relocated to a new container (WASM only)
+/// This is called on every init_drawing_canvas() to handle Flutter rebuilds
+#[cfg(target_arch = "wasm32")]
+pub fn check_and_relocate_canvas_global() {
+    use wasm_bindgen::JsCast;
+    use winit::platform::web::WindowExtWeb;
+    
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &*wrapper_ptr;
+                
+                // Only proceed if we have a window
+                if let Some(window_arc) = &wrapper.window {
+                    let canvas = match window_arc.canvas() {
+                        Some(c) => c,
+                        None => {
+                            log::warn!("Failed to get canvas from window");
+                            return;
+                        }
+                    };
+                    
+                    let document = web_sys::window()
+                        .and_then(|win| win.document())
+                        .expect("Failed to get document");
+                    
+                    // Find the canvas-container that doesn't have a canvas child yet
+                    let containers = match document.query_selector_all("[data-canvas-container]") {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::warn!("Failed to query canvas containers: {:?}", e);
+                            return;
+                        }
+                    };
+                    
+                    log::info!("🔍 Checking {} container(s) for canvas relocation", containers.length());
+                    
+                    let mut empty_container: Option<web_sys::Element> = None;
+                    for i in 0..containers.length() {
+                        if let Some(elem) = containers.get(i) {
+                            if let Ok(html_elem) = elem.dyn_into::<web_sys::HtmlElement>() {
+                                let container_id = html_elem.id();
+                                let has_canvas = html_elem.query_selector("canvas").ok().flatten().is_some();
+                                log::info!("  Container '{}': has_canvas={}", container_id, has_canvas);
+                                
+                                // Check if this container already has a canvas child
+                                if !has_canvas {
+                                    empty_container = Some(html_elem.into());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // If we found a new empty container, move the canvas there
+                    if let Some(new_container) = empty_container {
+                        // Check if canvas is in a different container
+                        if let Some(current_parent) = canvas.parent_element() {
+                            if current_parent.id() != new_container.id() {
+                                log::info!("🔄 Moving canvas from container '{}' to '{}'", 
+                                    current_parent.id(), new_container.id());
+                                
+                                // Move canvas to new container
+                                if let Err(e) = new_container.append_child(&canvas) {
+                                    log::error!("Failed to move canvas to new container: {:?}", e);
+                                    return;
+                                }
+                                
+                                log::info!("✅ Canvas moved to new container");
+                            } else {
+                                log::info!("Canvas already in correct container: {}", new_container.id());
+                            }
+                        } else {
+                            // Canvas has no parent (orphaned), attach to new container
+                            log::info!("🔄 Attaching orphaned canvas to container '{}'", new_container.id());
+                            if let Err(e) = new_container.append_child(&canvas) {
+                                log::error!("Failed to attach canvas to container: {:?}", e);
+                                return;
+                            }
+                            log::info!("✅ Canvas attached to container");
+                        }
+                    } else {
+                        log::info!("No empty container found (canvas already placed or no containers available)");
+                    }
                 }
             }
         } else {
@@ -228,7 +555,12 @@ impl AppWrapper {
             wasm_bindgen_futures::spawn_local(async move {
                 debug::update_status("Creating renderer...");
                 let mut renderer = Renderer::new(window_for_renderer, initial_size).await;
-                let mut app = App::new();
+                
+                // Create app with global brush params (persists across reinit)
+                let brush_params = get_global_brush_params();
+                log::info!("Initializing app with global brush params: size={}, flow={}, hardness={}", 
+                           brush_params.size, brush_params.flow, brush_params.hardness);
+                let mut app = App::with_brush_params(brush_params);
                 
                 // Clear canvas to initial color
                 app.clear_canvas(&mut renderer);
@@ -238,7 +570,7 @@ impl AppWrapper {
                     *app_ptr = Some(app);
                 }
 
-                log::info!("✅ Renderer initialized successfully");
+                log::info!("✅ Renderer initialized successfully with persisted brush settings");
                 debug::update_status("✅ Renderer ready");
                 debug::update_stage("Ready to draw!");
                 
@@ -251,7 +583,12 @@ impl AppWrapper {
         {
             // Desktop: Block on async initialization
             let mut renderer = pollster::block_on(Renderer::new(window.clone(), initial_size));
-            let mut app = App::new();
+            
+            // Create app with global brush params (persists across reinit)
+            let brush_params = get_global_brush_params();
+            log::info!("Initializing app with global brush params: size={}, flow={}, hardness={}", 
+                       brush_params.size, brush_params.flow, brush_params.hardness);
+            let mut app = App::with_brush_params(brush_params);
             
             // Clear canvas to initial color
             app.clear_canvas(&mut renderer);
@@ -259,7 +596,7 @@ impl AppWrapper {
             self.renderer = Some(renderer);
             self.app = Some(app);
 
-            log::info!("✅ Renderer created (will be configured on first resize event)");
+            log::info!("✅ Renderer created with persisted brush settings");
         }
     }
 }
@@ -268,6 +605,67 @@ impl ApplicationHandler for AppWrapper {
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         debug::update_stage("Creating window...");
         let initial_size = winit::dpi::PhysicalSize::new(800, 600);
+        
+        // On WASM, we need to check if we should move the canvas to a new container
+        // This handles layout changes where Flutter destroys the old container
+        #[cfg(target_arch = "wasm32")]
+        if self.window.is_some() {
+            use winit::platform::web::WindowExtWeb;
+            use wasm_bindgen::JsCast;
+            
+            let window_arc = self.window.as_ref().unwrap();
+            let canvas = window_arc.canvas().expect("Failed to get canvas from window");
+            
+            let document = web_sys::window()
+                .and_then(|win| win.document())
+                .expect("Failed to get document");
+            
+            // Find the canvas-container that doesn't have a canvas child yet
+            let containers = document.query_selector_all("[data-canvas-container]")
+                .expect("Failed to query canvas containers");
+            
+            let mut empty_container: Option<web_sys::Element> = None;
+            for i in 0..containers.length() {
+                if let Some(elem) = containers.get(i) {
+                    if let Ok(html_elem) = elem.dyn_into::<web_sys::HtmlElement>() {
+                        // Check if this container already has a canvas child
+                        if html_elem.query_selector("canvas").ok().flatten().is_none() {
+                            empty_container = Some(html_elem.into());
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // If we found a new empty container, move the canvas there
+            if let Some(new_container) = empty_container {
+                // Check if canvas is in a different container
+                if let Some(current_parent) = canvas.parent_element() {
+                    if current_parent.id() != new_container.id() {
+                        log::info!("🔄 Moving canvas from container '{}' to '{}'", 
+                            current_parent.id(), new_container.id());
+                        
+                        // Move canvas to new container
+                        new_container.append_child(&canvas)
+                            .expect("Failed to move canvas to new container");
+                        
+                        log::info!("✅ Canvas moved to new container");
+                    } else {
+                        log::info!("Canvas already in correct container: {}", new_container.id());
+                    }
+                } else {
+                    // Canvas has no parent (orphaned), attach to new container
+                    log::info!("🔄 Attaching orphaned canvas to container '{}'", new_container.id());
+                    new_container.append_child(&canvas)
+                        .expect("Failed to attach canvas to container");
+                    log::info!("✅ Canvas attached to container");
+                }
+            }
+            
+            drop(canvas);
+            return; // Window already exists, just needed to move canvas
+        }
+        
         if self.window.is_none() {
             // Create the window
             let window_attributes = WindowAttributes::default()
@@ -288,15 +686,36 @@ impl ApplicationHandler for AppWrapper {
             #[cfg(target_arch = "wasm32")]
             {
                 use winit::platform::web::WindowExtWeb;
+                use wasm_bindgen::JsCast;
 
                 // Get canvas reference - this borrows it briefly
                 let canvas = window_arc.canvas().expect("Failed to get canvas from window");
 
                 // Append canvas to DOM
-                let container = web_sys::window()
+                let document = web_sys::window()
                     .and_then(|win| win.document())
-                    .and_then(|doc| doc.get_element_by_id("canvas-container"))
-                    .expect("Failed to find canvas-container element");
+                    .expect("Failed to get document");
+                
+                // Find the canvas-container that doesn't have a canvas child yet
+                // This handles multiple practice sessions where old containers may still exist
+                let containers = document.query_selector_all("[data-canvas-container]")
+                    .expect("Failed to query canvas containers");
+                
+                let mut container: Option<web_sys::Element> = None;
+                for i in 0..containers.length() {
+                    if let Some(elem) = containers.get(i) {
+                        if let Ok(html_elem) = elem.dyn_into::<web_sys::HtmlElement>() {
+                            // Check if this container already has a canvas child
+                            if html_elem.query_selector("canvas").ok().flatten().is_none() {
+                                container = Some(html_elem.into());
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                let container = container.expect("Failed to find empty canvas-container element");
+                log::info!("Found empty canvas container: {:?}", container.id());
 
                 container.append_child(&canvas)
                     .expect("Failed to append canvas to container");
@@ -366,9 +785,8 @@ impl ApplicationHandler for AppWrapper {
                     return;
                 }
 
-                if let (Some(renderer), Some(app)) = (&mut self.renderer, &mut self.app) {
+                if let Some(renderer) = &mut self.renderer {
                     renderer.resize(physical_size);
-                    app.clear_canvas(renderer);
                     log::info!("✅ Surface configured with size: {:?}", physical_size);
                     debug::update_status(&format!("Surface: {}x{}", physical_size.width, physical_size.height));
                 }

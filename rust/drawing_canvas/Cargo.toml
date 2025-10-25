@@ -21,6 +21,10 @@ web-sys = { version = "0.3", features = [
     "Element",
     "HtmlCanvasElement",
     "Performance",
+    "ResizeObserver",
+    "ResizeObserverEntry",
+    "ResizeObserverSize",
+    "DomRectReadOnly",
 ] }
 js-sys = "0.3"
 
@@ -33,6 +37,12 @@ wgpu = { version = "27.0", features = ["webgl"] }
 # Using git dependency for unreleased tablet/stylus pointer API
 winit = { git = "https://github.com/rust-windowing/winit", branch = "master" }
 bytemuck = { version = "1.24.0", features = ["derive"] }
+
+# f16 support for texture conversion
+half = "2.7"
+
+# Async primitives
+futures = "0.3"
 
 # Async executor for desktop
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

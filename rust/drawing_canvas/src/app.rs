@@ -21,11 +21,19 @@ pub struct App {
 impl App {
     /// Create a new application with default state
     pub fn new() -> Self {
-        // Flutter's kPaperColor: #F4F3EF (warm off-white drawing surface) in sRGB
         Self {
-            clear_color: [255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0],
+            clear_color: [0.0, 0.0, 0.0, 0.0],
             input_queue: InputQueue::new(),
             brush_state: BrushState::new(),
+        }
+    }
+
+    /// Create a new application with specific brush parameters
+    pub fn with_brush_params(params: crate::brush::BrushParams) -> Self {
+        Self {
+            clear_color: [0.0, 0.0, 0.0, 0.0],
+            input_queue: InputQueue::new(),
+            brush_state: BrushState::with_params(params),
         }
     }
 
@@ -86,8 +94,6 @@ impl App {
     /// Set the blend mode
     pub fn set_blend_color_space(&mut self, color_space: crate::renderer::BlendColorSpace, renderer: &mut Renderer) {
         renderer.set_blend_color_space(color_space);
-        // Clear canvas when switching modes to start fresh
-        self.clear_canvas(renderer);
         log::info!("App blend color space changed to: {:?}", color_space);
     }
 

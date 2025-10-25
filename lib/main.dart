@@ -20,6 +20,7 @@ import 'services/google_drive_folder_service.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'services/persistence_util.dart';
 import 'services/debug_logger.dart';
+import 'models/brush_settings.dart';
 import 'widgets/debug_overlay.dart';
 import 'screens/start_screen.dart';
 
@@ -29,6 +30,10 @@ import 'screens/start_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
+
+  // Initialize brush settings service
+  await BrushSettingsService.init();
+
   // Ask browser to make storage persistent (reduce eviction risk).
   await requestPersistentStorage();
 

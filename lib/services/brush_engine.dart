@@ -6,6 +6,7 @@ import 'package:vector_math/vector_math_64.dart'
 import 'tiled_surface.dart';
 import 'dab_renderer.dart';
 import '../theme/colors.dart';
+import '../constants/brush_defaults.dart';
 import 'debug_profiler.dart';
 import 'debug_logger.dart';
 
@@ -58,19 +59,19 @@ class BrushParams {
 
   const BrushParams({
     // Loose construction sketch defaults (SAI-like)
-    this.maxSizePx = 100,
-    this.spacing = 0.01,
-    this.maxFlow = 1.0,
-    this.minFlow = 0.0,
-    this.maxFlowPressure = 1.0,
-    this.minScale = 1.0,
-    this.sizeGamma = 1.0,
-    this.flowGamma = 1.0,
-    this.hardness = 1.0,
-    this.opacity = 1.0,
+    this.maxSizePx = kMaxBrushSizePx,
+    this.spacing = kDefaultBrushSpacing,
+    this.maxFlow = kDefaultMaxFlow,
+    this.minFlow = kDefaultMinFlow,
+    this.maxFlowPressure = kDefaultMaxFlowPressure,
+    this.minScale = kDefaultMinScale,
+    this.sizeGamma = kDefaultSizeGamma,
+    this.flowGamma = kDefaultFlowGamma,
+    this.hardness = kDefaultBrushHardness,
+    this.opacity = kDefaultBrushOpacity,
     this.color = kBrushDarkDefault,
-    this.runtimeSizeScale = 0.75,
-    this.runtimeFlowScale = 0.3,
+    this.runtimeSizeScale = kDefaultBrushSizeScale,
+    this.runtimeFlowScale = kDefaultBrushFlowScale,
   });
 
   BrushParams copyWith({

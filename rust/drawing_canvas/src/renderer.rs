@@ -825,4 +825,123 @@ impl Renderer {
             bytemuck::cast_slice(&[blit_uniforms]),
         );
     }
+
+    /// Read canvas texture back to CPU as RGBA8 data
+    /// This is an expensive operation requiring GPU->CPU transfer
+    #[cfg(target_arch = "wasm32")]
+    pub async fn read_canvas_rgba8(&self) -> Result<Vec<u8>, String> {
+        // Use canvas texture dimensions, not surface config dimensions
+        let width = self.canvas_texture.width();
+        let height = self.canvas_texture.height();
+        let pixel_count = (width * height) as usize;
+        
+        log::info!("Reading canvas texture: {}x{} pixels", width, height);
+        
+        // Create a buffer to copy texture data into
+        // Canvas is Rgba16Float (8 bytes per pixel: 4 channels * 2 bytes per f16)
+        let bytes_per_pixel = 8;
+        let bytes_per_row_unpadded = width * bytes_per_pixel;
+        // Align to 256 bytes per row as required by WebGPU
+        let bytes_per_row_padded = ((bytes_per_row_unpadded + 255) / 256) * 256;
+        let buffer_size = (bytes_per_row_padded * height) as u64;
+        
+        log::debug!(
+            "Buffer layout: unpadded={}, padded={}, buffer_size={}",
+            bytes_per_row_unpadded, bytes_per_row_padded, buffer_size
+        );
+        
+        // Validate that padded row is sufficient
+        if bytes_per_row_padded < bytes_per_row_unpadded {
+            return Err(format!(
+                "Invalid padding: padded ({}) < unpadded ({})",
+                bytes_per_row_padded, bytes_per_row_unpadded
+            ));
+        }
+        
+        let output_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Canvas Readback Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        
+        // Create command encoder for copy operation
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Canvas Readback Encoder"),
+        });
+        
+        // Copy canvas texture to buffer
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.canvas_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &output_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row_padded),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        
+        self.queue.submit(std::iter::once(encoder.finish()));
+        
+        // Map the buffer to read data back
+        let buffer_slice = output_buffer.slice(..);
+        let (tx, rx) = futures::channel::oneshot::channel();
+        
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        
+        // Wait for mapping to complete (device.poll happens internally in WASM)
+        rx.await
+            .map_err(|_| "Failed to receive buffer map result".to_string())?
+            .map_err(|e| format!("Failed to map buffer: {:?}", e))?;
+        
+        // Read the data
+        let mapped_data = buffer_slice.get_mapped_range();
+        
+        // Canvas texture is Rgba16Float, so we need to convert to RGBA8
+        // The data in the buffer is f16 values (2 bytes per channel)
+        let mut rgba8_data = Vec::with_capacity(pixel_count * 4);
+        
+        for y in 0..height {
+            let row_offset = (y * bytes_per_row_padded) as usize;
+            for x in 0..width {
+                let pixel_offset = row_offset + (x * 8) as usize; // 8 bytes per pixel (4 * f16)
+                
+                // Read f16 values and convert to u8
+                for channel in 0..4 {
+                    let offset = pixel_offset + channel * 2;
+                    if offset + 1 < mapped_data.len() {
+                        let f16_bytes = [mapped_data[offset], mapped_data[offset + 1]];
+                        let f16_val = half::f16::from_le_bytes(f16_bytes);
+                        let f32_val = f16_val.to_f32();
+                        // Convert 0.0-1.0 float to 0-255 u8, clamping for safety
+                        let u8_val = (f32_val * 255.0).clamp(0.0, 255.0) as u8;
+                        rgba8_data.push(u8_val);
+                    } else {
+                        rgba8_data.push(0); // Fallback for out-of-bounds
+                    }
+                }
+            }
+        }
+        
+        drop(mapped_data);
+        output_buffer.unmap();
+        
+        log::info!("Canvas texture read back: {}x{} pixels ({} bytes)", width, height, rgba8_data.len());
+        Ok(rgba8_data)
+    }
 }
+

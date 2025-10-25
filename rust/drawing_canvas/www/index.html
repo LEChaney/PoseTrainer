@@ -72,8 +72,8 @@
         Rust + wgpu + WASM<br>
         Milestone: Clear to constant color
     </div>
-    
-    <div id="canvas-container">
+
+    <div id="canvas-container" data-canvas-container="true">
         <!-- Canvas will be inserted here by Rust/winit -->
     </div>
 
@@ -128,7 +128,7 @@
     </div>
 
     <script type="module">
-        import init, { set_blend_color_space } from './pkg/drawing_canvas.js';
+        import init, { init_drawing_canvas, set_blend_color_space } from './pkg/drawing_canvas.js';
 
         // Debug state
         let frameCount = 0;
@@ -176,6 +176,7 @@
             try {
                 updateDebugStatus('Loading WASM...');
                 await init();
+                await init_drawing_canvas();
                 document.getElementById('loading').style.display = 'none';
                 updateDebugStatus('✅ WASM Loaded');
                 updateDebugStage('Waiting for window...');

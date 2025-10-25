@@ -12,7 +12,8 @@ pub struct BrushParams {
     pub flow: f32,
     /// Brush edge hardness (0.0=soft, 1.0=hard)
     pub hardness: f32,
-    /// Spacing between dabs in pixels
+    /// Spacing between dabs as a fraction of brush diameter (0.0-1.0)
+    /// e.g., 0.05 = 5% of diameter, 0.25 = 25% of diameter
     pub spacing: f32,
     /// Brush color in sRGB RGBA (0.0-1.0)
     /// Will be converted to linear at render time if needed
@@ -45,8 +46,8 @@ impl BrushParams {
         if !(0.0..=1.0).contains(&self.hardness) {
             return Err("Hardness must be between 0.0 and 1.0".to_string());
         }
-        if self.spacing < 0.0 {
-            return Err("Spacing must be non-negative".to_string());
+        if !(0.0..=1.0).contains(&self.spacing) {
+            return Err("Spacing must be between 0.0 and 1.0".to_string());
         }
         Ok(())
     }
@@ -55,16 +56,17 @@ impl BrushParams {
 impl Default for BrushParams {
     fn default() -> Self {
         Self {
-            // Match Flutter effective defaults:
-            // maxSizePx * runtimeSizeScale = 100 * 0.75 = 75
+            // Match Flutter/Dart centralized defaults (brush_defaults.dart)
+            // kMaxBrushSizePx = 100, kDefaultBrushSizeScale = 0.75
+            // Effective size: 100 * 0.75 = 75px
             size: 75.0,
-            // Flutter effective flow ~0.3 (maxFlow * runtimeFlowScale with formula)
+            // kDefaultBrushFlowScale = 0.3
             flow: 0.3,
-            // Hardness matches
+            // kDefaultBrushHardness = 1.0
             hardness: 1.0,
-            // Flutter spacing: 0.01 clamped to 0.05 minimum, as fraction of diameter
-            // 0.05 * 75 = 3.75 pixels
-            spacing: 3.75,
+            // kDefaultBrushSpacing = 0.01, kMinBrushSpacing = 0.05
+            // Flutter clamps to 0.05 minimum
+            spacing: 0.05,
             // Flutter brush color: kBrushDarkDefault (#A302DE = RGB 163, 2, 222)
             // Store in sRGB space - will be converted to linear at render time if needed
             color: [163.0 / 255.0, 2.0 / 255.0, 222.0 / 255.0, 1.0],
@@ -178,16 +180,18 @@ impl BrushState {
         let dy = position[1] - prev_pos[1];
         let segment_distance = (dx * dx + dy * dy).sqrt();
 
-        // Place dabs along the path based on spacing
-        let spacing = self.params.spacing.max(0.1); // Avoid division by zero
+        // Calculate actual spacing in pixels as a percentage of brush diameter
+        // Clamp spacing ratio to a minimum to avoid division by zero and ensure reasonable behavior
+        let spacing_ratio = self.params.spacing.max(0.01);
+        let spacing_px = spacing_ratio * self.params.size;
 
         let mut remaining_distance = segment_distance;
-        while remaining_distance >= spacing {
+        while remaining_distance >= spacing_px {
             // Calculate how far along the CURRENT SEGMENT this dab should be
             // accumulated_distance is measured from the LAST DAB we placed (which might be in a previous segment)
             // We need to figure out where along [prev_pos -> position] to place this dab
             
-            let distance_into_segment = segment_distance - remaining_distance + spacing;
+            let distance_into_segment = segment_distance - remaining_distance + spacing_px;
             let t = (distance_into_segment / segment_distance).clamp(0.0, 1.0);
 
             // Interpolate position
@@ -205,7 +209,7 @@ impl BrushState {
 
             self.last_dab_position = Some(dab.position);
             self.last_dab_pressure = dab_pressure;
-            remaining_distance -= spacing;
+            remaining_distance -= spacing_px;
         }
 
         dabs

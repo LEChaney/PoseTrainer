@@ -21,6 +21,19 @@ jobs:
         with:
           channel: stable
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build Rust WASM module
+        run: |
+          cd rust/drawing_canvas
+          wasm-pack build --target web --out-dir ../../web/pkg --release
+
       - name: Flutter pub get
         run: flutter pub get
 
