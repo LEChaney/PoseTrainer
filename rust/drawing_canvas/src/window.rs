@@ -471,10 +471,10 @@ impl AppWrapper {
                 // Mouse has no pressure or tilt
                 (1.0, None, None, None, "Mouse")
             }
-            winit::event::PointerSource::Touch { force, .. } => {
-                // Touch may have pressure via force
-                let pressure = Self::extract_pressure(force);
-                (pressure, None, None, None, "Touch")
+            winit::event::PointerSource::Touch { .. } => {
+                // Touch may have pressure via force (NOT RELIABLE)
+                // let pressure = Self::extract_pressure(force);
+                (1.0, None, None, None, "Touch")
             }
             winit::event::PointerSource::TabletTool { data, .. } => {
                 // Stylus/tablet tool with full data!
