@@ -782,36 +782,46 @@ impl ApplicationHandler for AppWrapper {
                     // Don't request another redraw - we're in Wait mode, only redraw on events
                 }
             }
-            WindowEvent::PointerButton { button, state, primary, time_stamp, .. } => {
+            WindowEvent::PointerButton { button, state, primary, position, time_stamp, .. } => {
                 // Handle pointer button press/release (mouse, stylus, touch)
-                // For now, only respond to primary button (left click, stylus tip, finger)
-                if primary {
-                    if let Some(cursor_pos) = self.cursor_position {
-                        // Extract pressure and tablet data from the button source
-                        let (pressure, tilt, azimuth, twist) = Self::extract_button_data(&button);
-                        
-                        let event = PointerEvent {
-                            position: [cursor_pos.x as f32, cursor_pos.y as f32],
-                            pressure,
-                            tilt,
-                            azimuth,
-                            twist,
-                            timestamp: time_stamp,
-                            event_type: match state {
-                                ElementState::Pressed => PointerEventType::Down,
-                                ElementState::Released => PointerEventType::Up,
-                            },
-                        };
+                // Respond to primary button (left click, stylus tip) or any touch input
+                let is_touch = matches!(button, winit::event::ButtonSource::Touch { .. });
+                let should_handle = primary || is_touch;
+                
+                if should_handle {
+                    // Use position from the event itself - this is more reliable than cursor_position
+                    // especially for touch Up events where there may not be a final Move event
+                    let event_pos = position;
+                    
+                    // Also update cursor_position for consistency
+                    self.cursor_position = Some(event_pos);
+                    
+                    // Extract pressure and tablet data from the button source
+                    let (pressure, tilt, azimuth, twist) = Self::extract_button_data(&button);
+                    
+                    let event = PointerEvent {
+                        position: [event_pos.x as f32, event_pos.y as f32],
+                        pressure,
+                        tilt,
+                        azimuth,
+                        twist,
+                        timestamp: time_stamp,
+                        event_type: match state {
+                            ElementState::Pressed => PointerEventType::Down,
+                            ElementState::Released => PointerEventType::Up,
+                        },
+                    };
 
-                        if let Some(app) = &mut self.app {
-                            app.queue_input_event(event);
-                            log::debug!("Pointer button {:?} at {:?}, pressure={}", state, cursor_pos, pressure);
-                        }
+                    if let Some(app) = &mut self.app {
+                        app.queue_input_event(event);
+                        let input_type = if is_touch { "touch" } else { "pointer" };
+                        log::debug!("{} button {:?} at ({}, {}), pressure={}", 
+                            input_type, state, event_pos.x, event_pos.y, pressure);
+                    }
 
-                        // Request redraw to process the input
-                        if let Some(window) = &self.window {
-                            window.request_redraw();
-                        }
+                    // Request redraw to process the input
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
                     }
                 }
             }
