@@ -17,3 +17,6 @@ www/pkg/
 # OS
 .DS_Store
 Thumbs.db
+
+# Certificates
+*.pem

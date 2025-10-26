@@ -394,6 +394,7 @@ pub struct AppWrapper {
     pub renderer: Option<Renderer>,
     pub app: Option<App>,
     cursor_position: Option<winit::dpi::PhysicalPosition<f64>>,
+    last_pointer_move_time: f64, // Used for de-duplicating erroneous pointer move events on iOS webkit
     #[cfg(not(target_arch = "wasm32"))]
     start_time: Option<std::time::Instant>,
 }
@@ -406,6 +407,7 @@ impl AppWrapper {
             renderer: None,
             app: None,
             cursor_position: None,
+            last_pointer_move_time: 0.0,
             #[cfg(not(target_arch = "wasm32"))]
             start_time: Some(std::time::Instant::now()),
         }
@@ -483,25 +485,6 @@ impl AppWrapper {
                 // Unknown source, assume no pressure
                 (1.0, None, None, None, "Unknown")
             }
-        }
-    }
-
-    /// Get timestamp in milliseconds since app start
-    fn get_timestamp(&self) -> f64 {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.start_time
-                .map(|start| start.elapsed().as_secs_f64() * 1000.0)
-                .unwrap_or(0.0)
-        }
-        
-        #[cfg(target_arch = "wasm32")]
-        {
-            // On WASM, use the browser's performance.now() API
-            web_sys::window()
-                .and_then(|win| win.performance())
-                .map(|perf| perf.now())
-                .unwrap_or(0.0)
         }
     }
 
@@ -799,13 +782,11 @@ impl ApplicationHandler for AppWrapper {
                     // Don't request another redraw - we're in Wait mode, only redraw on events
                 }
             }
-            WindowEvent::PointerButton { button, state, primary, .. } => {
+            WindowEvent::PointerButton { button, state, primary, time_stamp, .. } => {
                 // Handle pointer button press/release (mouse, stylus, touch)
                 // For now, only respond to primary button (left click, stylus tip, finger)
                 if primary {
                     if let Some(cursor_pos) = self.cursor_position {
-                        let timestamp = self.get_timestamp();
-                        
                         // Extract pressure and tablet data from the button source
                         let (pressure, tilt, azimuth, twist) = Self::extract_button_data(&button);
                         
@@ -815,7 +796,7 @@ impl ApplicationHandler for AppWrapper {
                             tilt,
                             azimuth,
                             twist,
-                            timestamp,
+                            timestamp: time_stamp,
                             event_type: match state {
                                 ElementState::Pressed => PointerEventType::Down,
                                 ElementState::Released => PointerEventType::Up,
@@ -834,12 +815,15 @@ impl ApplicationHandler for AppWrapper {
                     }
                 }
             }
-            WindowEvent::PointerMoved { source, position, .. } => {
+            WindowEvent::PointerMoved { source, position, time_stamp, .. } => {
+                if time_stamp <= self.last_pointer_move_time {
+                    // Duplicate or out-of-order event, ignore
+                    return;
+                }
+                self.last_pointer_move_time = time_stamp;
+
                 // Track cursor position
                 self.cursor_position = Some(position);
-                
-                // Get timestamp before borrowing app
-                let timestamp = self.get_timestamp();
                 
                 // Extract pressure and tablet data from the pointer source
                 let (pressure, tilt, azimuth, twist, ptr_type) = Self::extract_pointer_data(&source);
@@ -863,7 +847,7 @@ impl ApplicationHandler for AppWrapper {
                         tilt,
                         azimuth,
                         twist,
-                        timestamp,
+                        timestamp: time_stamp,
                         event_type: PointerEventType::Move,
                     };
 

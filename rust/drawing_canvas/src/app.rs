@@ -110,7 +110,7 @@ impl App {
             match event.event_type {
                 crate::input::PointerEventType::Down => {
                     // Start new stroke
-                    self.brush_state.reset_stroke();
+                    self.brush_state.begin_stroke();
                     let dabs = self.brush_state.calculate_dabs(event.position, event.pressure, event.event_type);
                     all_dabs.extend(dabs);
                 }
@@ -123,6 +123,7 @@ impl App {
                     // End stroke
                     let dabs = self.brush_state.calculate_dabs(event.position, event.pressure, event.event_type);
                     all_dabs.extend(dabs);
+                    self.brush_state.end_stroke();
                 }
             }
         }

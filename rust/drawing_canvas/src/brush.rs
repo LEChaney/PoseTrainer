@@ -120,6 +120,8 @@ pub struct BrushState {
     last_dab_pressure: f32,
     /// Whether the last dab was the first in the stroke
     has_moved: bool,
+    /// Whether the brush is currently down (in a stroke)
+    brush_down: bool,
 }
 
 impl BrushState {
@@ -130,6 +132,7 @@ impl BrushState {
             last_dab_position: None,
             last_dab_pressure: 1.0,
             has_moved: false,
+            brush_down: false,
         }
     }
 
@@ -140,20 +143,31 @@ impl BrushState {
             last_dab_position: None,
             last_dab_pressure: 1.0,
             has_moved: false,
+            brush_down: false,
         }
     }
 
     /// Reset stroke state (call when starting a new stroke)
-    pub fn reset_stroke(&mut self) {
+    pub fn begin_stroke(&mut self) {
         self.last_dab_position = None;
         self.last_dab_pressure = 1.0;
         self.has_moved = false;
+        self.brush_down = true;
+    }
+
+    /// End the current stroke (call when finishing a stroke)
+    pub fn end_stroke(&mut self) {
+        self.brush_down = false;
     }
 
     /// Calculate dabs for a segment from previous position to current position
     /// Returns a vector of dabs to render
     pub fn calculate_dabs(&mut self, position: [f32; 2], pressure: f32, event_type: crate::input::PointerEventType) -> Vec<BrushDab> {
         let mut dabs = Vec::new();
+        // Only draw if brush is down
+        if !self.brush_down {
+            return dabs;
+        }
 
         // Defer adding the first dab until we have movement to get accurate pressure
         let prev_pos = match self.last_dab_position {
