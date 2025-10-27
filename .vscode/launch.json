@@ -23,7 +23,9 @@
             "type": "dart",
             "args": [
                 "--web-port=5000",
-                "--web-header=Cross-Origin-Opener-Policy=same-origin-allow-popups"
+                "--web-header=Cross-Origin-Opener-Policy=same-origin-allow-popups",
+                "--web-tls-cert-path=localhost+1.pem",
+                "--web-tls-cert-key-path=localhost+1-key.pem",
             ]
         },
         {
@@ -33,7 +35,9 @@
             "flutterMode": "profile",
             "args": [
                 "--web-port=5000",
-                "--web-header=Cross-Origin-Opener-Policy=same-origin-allow-popups"
+                "--web-header=Cross-Origin-Opener-Policy=same-origin-allow-popups",
+                "--web-tls-cert-path=localhost+1.pem",
+                "--web-tls-cert-key-path=localhost+1-key.pem",
             ]
         },
         {
@@ -43,7 +47,9 @@
             "flutterMode": "release",
             "args": [
                 "--web-port=5000",
-                "--web-header=Cross-Origin-Opener-Policy=same-origin-allow-popups"
+                "--web-header=Cross-Origin-Opener-Policy=same-origin-allow-popups",
+                "--web-tls-cert-path=localhost+1.pem",
+                "--web-tls-cert-key-path=localhost+1-key.pem",
             ]
         }
     ]
