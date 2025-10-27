@@ -6,6 +6,7 @@
 use wgpu;
 use wgpu::util::DeviceExt;
 use crate::brush::BrushDab;
+use crate::debug;
 
 /// Color blending mode for brush strokes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +218,7 @@ impl Renderer {
 
         // Create brush rendering pipelines for both linear canvas and sRGB surface
         let brush_pipeline = Self::create_brush_pipeline(&device, canvas_format);
+        debug::update_status("Brush pipeline created...");
         log::info!("✅ Brush pipeline created for format: {:?}", canvas_format);
 
         // Create uniform buffer for canvas size
@@ -329,6 +331,7 @@ impl Renderer {
             label: Some("Brush Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/brush.wgsl").into()),
         });
+        debug::update_status("Creating brush pipeline...");
         
         // Create bind group layout for uniforms
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -344,6 +347,7 @@ impl Renderer {
                 count: None,
             }],
         });
+        debug::update_status("Brush bind group layout created...");
         
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -351,6 +355,8 @@ impl Renderer {
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
+
+        debug::update_status("Creating vertex buffer layout...");
         
         // Vertex buffer layout for dab instances
         let vertex_buffer_layout = wgpu::VertexBufferLayout {
@@ -389,6 +395,8 @@ impl Renderer {
                 },
             ],
         };
+
+        debug::update_status("Creating brush render pipeline...");
         
         // Create the render pipeline
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

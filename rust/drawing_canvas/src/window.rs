@@ -5,7 +5,7 @@
 
 use crate::{App, Renderer};
 use crate::debug;
-use crate::input::{PointerEvent, PointerEventType};
+use crate::input::{PointerEvent, PointerEventSource, PointerEventType};
 use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent, ElementState, Force};
 use winit::event_loop::ActiveEventLoop;
@@ -441,49 +441,50 @@ impl AppWrapper {
     }
 
     /// Extract input data from ButtonSource (for PointerButton events)
-    fn extract_button_data(button: &winit::event::ButtonSource) -> (f32, Option<[f32; 2]>, Option<f32>, Option<f32>) {
+    fn extract_button_data(button: &winit::event::ButtonSource) -> (f32, Option<[f32; 2]>, Option<f32>, Option<f32>, PointerEventSource) {
         match button {
             winit::event::ButtonSource::Mouse(_) => {
                 // Mouse has no pressure or tilt
-                (1.0, None, None, None)
+                (1.0, None, None, None, PointerEventSource::Mouse)
             }
-            winit::event::ButtonSource::Touch { force, .. } => {
-                // Touch may have pressure via force
-                let pressure = Self::extract_pressure(force);
-                (pressure, None, None, None)
+            winit::event::ButtonSource::Touch { .. } => {
+                // Touch may have pressure via force (NOT RELIABLE)
+                //let pressure = Self::extract_pressure(force);
+                (1.0, None, None, None, PointerEventSource::Touch)
             }
             winit::event::ButtonSource::TabletTool { data, .. } => {
                 // Stylus/tablet tool with full data!
-                Self::extract_tablet_data(data)
+                let (pressure, tilt, azimuth, twist) = Self::extract_tablet_data(data);
+                (pressure, tilt, azimuth, twist, PointerEventSource::TabletTool)
             }
             winit::event::ButtonSource::Unknown(_) => {
                 // Unknown source, assume no pressure
-                (1.0, None, None, None)
+                (1.0, None, None, None, PointerEventSource::Unknown)
             }
         }
     }
 
     /// Extract input data from PointerSource (for PointerMoved events)
     /// Returns (pressure, tilt, azimuth, twist, pointer_type_name)
-    fn extract_pointer_data(source: &winit::event::PointerSource) -> (f32, Option<[f32; 2]>, Option<f32>, Option<f32>, &'static str) {
+    fn extract_pointer_data(source: &winit::event::PointerSource) -> (f32, Option<[f32; 2]>, Option<f32>, Option<f32>, PointerEventSource) {
         match source {
             winit::event::PointerSource::Mouse => {
                 // Mouse has no pressure or tilt
-                (1.0, None, None, None, "Mouse")
+                (1.0, None, None, None, PointerEventSource::Mouse)
             }
             winit::event::PointerSource::Touch { .. } => {
                 // Touch may have pressure via force (NOT RELIABLE)
                 // let pressure = Self::extract_pressure(force);
-                (1.0, None, None, None, "Touch")
+                (1.0, None, None, None, PointerEventSource::Touch)
             }
             winit::event::PointerSource::TabletTool { data, .. } => {
                 // Stylus/tablet tool with full data!
                 let (pressure, tilt, azimuth, twist) = Self::extract_tablet_data(data);
-                (pressure, tilt, azimuth, twist, "Stylus/Tablet")
+                (pressure, tilt, azimuth, twist, PointerEventSource::TabletTool)
             }
             winit::event::PointerSource::Unknown => {
                 // Unknown source, assume no pressure
-                (1.0, None, None, None, "Unknown")
+                (1.0, None, None, None, PointerEventSource::Unknown)
             }
         }
     }
@@ -797,7 +798,13 @@ impl ApplicationHandler for AppWrapper {
                     self.cursor_position = Some(event_pos);
                     
                     // Extract pressure and tablet data from the button source
-                    let (pressure, tilt, azimuth, twist) = Self::extract_button_data(&button);
+                    let (
+                        pressure,
+                        tilt,
+                        azimuth,
+                        twist,
+                        event_src,
+                    ) = Self::extract_button_data(&button);
                     
                     let event = PointerEvent {
                         position: [event_pos.x as f32, event_pos.y as f32],
@@ -810,6 +817,7 @@ impl ApplicationHandler for AppWrapper {
                             ElementState::Pressed => PointerEventType::Down,
                             ElementState::Released => PointerEventType::Up,
                         },
+                        source: event_src,
                     };
 
                     if let Some(app) = &mut self.app {
@@ -836,11 +844,22 @@ impl ApplicationHandler for AppWrapper {
                 self.cursor_position = Some(position);
                 
                 // Extract pressure and tablet data from the pointer source
-                let (pressure, tilt, azimuth, twist, ptr_type) = Self::extract_pointer_data(&source);
+                let (
+                    pressure, 
+                    tilt, 
+                    azimuth, 
+                    twist, 
+                    event_src
+                ) = Self::extract_pointer_data(&source);
                 
                 // Update debug overlay with pointer info
                 debug::update_pointer(
-                    ptr_type,
+                    match event_src {
+                        PointerEventSource::Mouse => "Mouse",
+                        PointerEventSource::Touch => "Touch",
+                        PointerEventSource::TabletTool => "Stylus/Tablet",
+                        PointerEventSource::Unknown => "Unknown",
+                    },
                     Some(position.x as f32),
                     Some(position.y as f32),
                     Some(pressure),
@@ -859,6 +878,7 @@ impl ApplicationHandler for AppWrapper {
                         twist,
                         timestamp: time_stamp,
                         event_type: PointerEventType::Move,
+                        source: event_src,
                     };
 
                     app.queue_input_event(event);

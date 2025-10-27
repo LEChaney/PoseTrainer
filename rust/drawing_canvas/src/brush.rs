@@ -3,6 +3,8 @@
 //! This module defines brush parameters and provides logic for calculating
 //! brush dabs from input events.
 
+use crate::input::PointerEventSource;
+
 /// Parameters that define brush behavior
 #[derive(Debug, Clone, Copy)]
 pub struct BrushParams {
@@ -122,6 +124,8 @@ pub struct BrushState {
     has_moved: bool,
     /// Whether the brush is currently down (in a stroke)
     brush_down: bool,
+    /// Source of the brush input (Mouse, Touch, TabletTool, Unknown)
+    brush_src: PointerEventSource,
 }
 
 impl BrushState {
@@ -133,6 +137,7 @@ impl BrushState {
             last_dab_pressure: 1.0,
             has_moved: false,
             brush_down: false,
+            brush_src: PointerEventSource::Unknown,
         }
     }
 
@@ -144,7 +149,17 @@ impl BrushState {
             last_dab_pressure: 1.0,
             has_moved: false,
             brush_down: false,
+            brush_src: PointerEventSource::Unknown,
         }
+    }
+
+    /// Update the source of the brush input, potentially ending the stroke if source changes
+    pub fn update_brush_src(&mut self, source: PointerEventSource) {
+        if self.brush_src != source && self.brush_down {
+            // If source changed during stroke, end the stroke
+            self.end_stroke();
+        }
+        self.brush_src = source;
     }
 
     /// Reset stroke state (call when starting a new stroke)

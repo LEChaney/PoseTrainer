@@ -23,6 +23,8 @@ pub struct PointerEvent {
     pub timestamp: f64,
     /// Type of event (down, move, up)
     pub event_type: PointerEventType,
+    /// Source of the event (Mouse, Touch, TabletTool)
+    pub source: PointerEventSource,
 }
 
 /// Type of pointer event
@@ -34,6 +36,15 @@ pub enum PointerEventType {
     Move,
     /// Pointer button released (end of stroke)
     Up,
+}
+
+// Source of pointer event
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerEventSource {
+    Mouse,
+    Touch,
+    TabletTool,
+    Unknown,
 }
 
 /// Queue for input events that coalesces events between frames

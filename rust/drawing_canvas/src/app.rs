@@ -107,6 +107,7 @@ impl App {
         let mut all_dabs = Vec::new();
 
         for event in self.input_queue.drain_events() {
+            self.brush_state.update_brush_src(event.source);
             match event.event_type {
                 crate::input::PointerEventType::Down => {
                     // Start new stroke
