@@ -162,17 +162,26 @@ impl BrushState {
         self.brush_src = source;
     }
 
-    /// Reset stroke state (call when starting a new stroke)
+    /// Reset brush state to initial conditions
+    pub fn reset_brush(&mut self) {
+        self.last_dab_position = None;
+        self.last_dab_pressure = 0.0;
+        self.has_moved = false;
+        self.brush_down = false;
+        self.brush_src = PointerEventSource::Unknown;
+    }
+
+    /// Begin a new stroke (call when starting a new stroke)
     pub fn begin_stroke(&mut self) {
         self.last_dab_position = None;
-        self.last_dab_pressure = 1.0;
+        self.last_dab_pressure = 0.0;
         self.has_moved = false;
         self.brush_down = true;
     }
 
     /// End the current stroke (call when finishing a stroke)
     pub fn end_stroke(&mut self) {
-        self.brush_down = false;
+        self.reset_brush();
     }
 
     /// Calculate dabs for a segment from previous position to current position
