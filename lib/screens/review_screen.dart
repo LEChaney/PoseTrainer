@@ -157,6 +157,18 @@ class _ReviewScreenState extends State<ReviewScreen> {
             TextButton(
               onPressed: () {
                 final res = ReviewResult(
+                  action: ReviewAction.repeat,
+                  overlay: OverlayTransform(scale: _scale, offset: _offset),
+                  save: true,
+                );
+                Navigator.of(context).pop(res);
+              },
+              child: const Text('Repeat'),
+            ),
+          if (widget.sessionControls)
+            TextButton(
+              onPressed: () {
+                final res = ReviewResult(
                   action: widget.isLast ? ReviewAction.end : ReviewAction.next,
                   overlay: OverlayTransform(scale: _scale, offset: _offset),
                 );

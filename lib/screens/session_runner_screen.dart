@@ -112,6 +112,9 @@ class _SessionRunnerScreenState extends State<SessionRunnerScreen> {
     if (reviewResult == null || reviewResult.action == ReviewAction.next) {
       setState(() => _index++);
       _startCurrent();
+    } else if (reviewResult.action == ReviewAction.repeat) {
+      // Retry the same image without saving or advancing
+      _startCurrent();
     } else {
       // End requested -> go to history
       Navigator.of(context).pushReplacement(
