@@ -315,7 +315,11 @@ Future<void> _importWasmModule() async {
     
     window.__wasmDrawingInit = async () => {
       console.log('[WASM] Importing drawing_canvas.js...');
-      const module = await import('./pkg/drawing_canvas.js');
+      // Use base href to construct correct path for versioned assets
+      const baseHref = document.querySelector('base')?.getAttribute('href') || '/';
+      const modulePath = baseHref + 'pkg/drawing_canvas.js';
+      console.log('[WASM] Loading from:', modulePath);
+      const module = await import(modulePath);
       console.log('[WASM] Module imported, calling default init...');
       await module.default();
       console.log('[WASM] Init complete, module:', module);
