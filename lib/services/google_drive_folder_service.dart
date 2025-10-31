@@ -680,28 +680,46 @@ class GoogleDriveFolderService extends ChangeNotifier {
       tag: _tag,
     );
 
-    // Collect all images from selected folders
-    final allImages = <DriveImageFile>[];
-    for (final folderId in folderIds) {
-      final images = await scanFolder(folderId);
-      allImages.addAll(images);
+    // Randomly select the folder that will be sampled for each image
+    // This ensures uniform distribution across folders
+    final random = math.Random();
+    final sampledFolders = <String>{};
+    while (sampledFolders.length < math.min(folderIds.length, count)) {
+      sampledFolders.add(folderIds[random.nextInt(folderIds.length)]);
     }
 
-    if (allImages.isEmpty) {
+    // Collect a random image from each selected folder
+    final sampledImages = <DriveImageFile>[];
+    for (final folderId in sampledFolders) {
+      final images = await scanFolder(folderId);
+      if (images.isNotEmpty) {
+        sampledImages.add(images[random.nextInt(images.length)]);
+      }
+    }
+
+    if (sampledImages.isEmpty) {
       warningLog('No images found in selected folders', tag: _tag);
       return [];
     }
 
-    // Uniform random sampling
-    final random = math.Random();
-    allImages.shuffle(random);
-    final sampled = allImages.take(count).toList();
+    // Update total images count stats (only in debug mode, since this could be slow)
+    if (!kReleaseMode) {
+      var totalImages = 0;
+      for (final folderId in folderIds) {
+        final images = await scanFolder(
+          folderId,
+        ); // Probably cached so hopefully fast
+        totalImages += images.length;
+      }
 
-    infoLog(
-      'Sampled ${sampled.length} images from ${allImages.length} total',
-      tag: _tag,
-    );
-    return sampled;
+      infoLog(
+        'Sampled ${sampledImages.length} images from $totalImages total',
+        tag: _tag,
+      );
+    } else {
+      infoLog('Sampled ${sampledImages.length} images', tag: _tag);
+    }
+    return sampledImages;
   }
 
   // --- Image Download ---
