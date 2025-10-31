@@ -180,6 +180,17 @@ class WasmDrawingService {
     debugLog('Set brush color: rgba($r, $g, $b, $a)', tag: 'WASM');
   }
 
+  /// Set input filter mode
+  /// penOnly: true for pen-only mode, false for pen+touch mode
+  void setInputFilterMode(bool penOnly) {
+    _ensureInitialized();
+    _setInputFilterMode(penOnly);
+    debugLog(
+      'Set input filter mode: ${penOnly ? 'Pen Only' : 'Pen+Touch'}',
+      tag: 'WASM',
+    );
+  }
+
   /// Clear the canvas
   void clear() {
     _ensureInitialized();
@@ -265,6 +276,9 @@ external void _setBrushHardness(double hardness);
 @JS('set_brush_color')
 external void _setBrushColor(double r, double g, double b, double a);
 
+@JS('set_input_filter_mode')
+external void _setInputFilterMode(bool penOnly);
+
 @JS('clear_canvas')
 external void _clearCanvas();
 
@@ -330,6 +344,7 @@ Future<void> _importWasmModule() async {
       window.set_brush_flow = module.set_brush_flow;
       window.set_brush_hardness = module.set_brush_hardness;
       window.set_brush_color = module.set_brush_color;
+      window.set_input_filter_mode = module.set_input_filter_mode;
       window.clear_canvas = module.clear_canvas;
       window.get_canvas_width = module.get_canvas_width;
       window.get_canvas_height = module.get_canvas_height;

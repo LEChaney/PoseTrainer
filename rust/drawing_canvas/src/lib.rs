@@ -16,7 +16,7 @@ mod renderer;
 mod window;
 
 pub use app::App;
-pub use brush::{BrushDab, BrushParams, BrushState, PressureMapping};
+pub use brush::{BrushDab, BrushParams, BrushState, InputFilterMode, PressureMapping};
 pub use input::{InputQueue, PointerEvent, PointerEventType};
 pub use renderer::{BlendColorSpace, Renderer};
 pub use window::AppWrapper;
@@ -134,6 +134,16 @@ pub fn set_brush_hardness(hardness: f32) {
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn set_brush_color(r: f32, g: f32, b: f32, a: f32) {
     window::set_brush_color_global(r, g, b, a);
+}
+
+/// Set input filter mode
+/// 
+/// # Arguments
+/// * `pen_only` - true for pen-only mode, false for pen+touch mode
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn set_input_filter_mode(pen_only: bool) {
+    window::set_input_filter_mode_global(pen_only);
 }
 
 /// Clear the canvas to the current clear color

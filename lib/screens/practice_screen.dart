@@ -69,6 +69,7 @@ class _PracticeScreenState extends State<PracticeScreen>
   bool _ctrlDown = false; // track Control key for panning mode
   final DebugProfiler _profiler = DebugProfiler();
   bool _showProfilerHud = false; // toggle for on-screen profiler
+  bool _penOnlyMode = false; // toggle for pen-only vs pen+touch input
   int _pressureLogCount = 0; // Limit pressure logging verbosity
   // Countdown state (session mode)
   Timer? _countdown;
@@ -340,6 +341,21 @@ class _PracticeScreenState extends State<PracticeScreen>
   AppBar _buildAppBar() => AppBar(
     title: const Text('Practice'),
     actions: [
+      // Pen-only mode toggle (only show on web when using WASM)
+      if (_useWasm)
+        IconButton(
+          icon: Icon(_penOnlyMode ? Icons.draw : Icons.touch_app),
+          onPressed: () {
+            setState(() => _penOnlyMode = !_penOnlyMode);
+            // Update WASM service
+            _wasmService?.setInputFilterMode(_penOnlyMode);
+            debugLog(
+              'Input filter mode: ${_penOnlyMode ? 'Pen Only' : 'Pen+Touch'}',
+              tag: 'Practice',
+            );
+          },
+          tooltip: _penOnlyMode ? 'Pen Only Mode' : 'Pen + Touch Mode',
+        ),
       IconButton(
         icon: Icon(_showProfilerHud ? Icons.speed : Icons.speed_outlined),
         onPressed: () => setState(() => _showProfilerHud = !_showProfilerHud),

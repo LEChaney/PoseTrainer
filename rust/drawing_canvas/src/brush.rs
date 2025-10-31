@@ -36,6 +36,8 @@ pub struct BrushParams {
     /// Flow pressure curve gamma
     /// <1.0 = aggressive early opacity, =1.0 = linear, >1.0 = delayed opacity
     pub flow_gamma: f32,
+    /// Input filter mode - which input sources to accept
+    pub input_filter_mode: InputFilterMode,
 }
 
 impl BrushParams {
@@ -98,6 +100,7 @@ impl Default for BrushParams {
             min_flow_percent: 0.0,
             size_gamma: 1.4,
             flow_gamma: 1.0,
+            input_filter_mode: InputFilterMode::default(),
         }
     }
 }
@@ -133,6 +136,21 @@ pub enum PressureMapping {
 impl Default for PressureMapping {
     fn default() -> Self {
         Self::Both
+    }
+}
+
+/// Controls which input sources are accepted for drawing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputFilterMode {
+    /// Only accept pen/stylus input (TabletTool)
+    PenOnly,
+    /// Accept pen, touch, and mouse input
+    PenAndTouch,
+}
+
+impl Default for InputFilterMode {
+    fn default() -> Self {
+        Self::PenAndTouch
     }
 }
 
@@ -215,6 +233,15 @@ impl BrushState {
         // Only draw if brush is down
         if !self.brush_down {
             return dabs;
+        }
+
+        // Filter input based on input filter mode
+        if self.params.input_filter_mode == InputFilterMode::PenOnly {
+            // In PenOnly mode, only accept non-touch input
+            if self.brush_src == PointerEventSource::Touch {
+                log::debug!("Rejecting input from {:?} in PenOnly mode", self.brush_src);
+                return dabs;
+            }
         }
 
         // Defer adding the first dab until we have movement to get accurate pressure

@@ -196,6 +196,38 @@ pub fn set_brush_color_global(r: f32, g: f32, b: f32, a: f32) {
     });
 }
 
+/// Set input filter mode from JavaScript (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn set_input_filter_mode_global(pen_only: bool) {
+    use crate::brush::InputFilterMode;
+    
+    log::info!("set_input_filter_mode_global called: pen_only={}", pen_only);
+    
+    let mode = if pen_only {
+        InputFilterMode::PenOnly
+    } else {
+        InputFilterMode::PenAndTouch
+    };
+    
+    // Update global brush params (persists across app reinit)
+    update_global_brush_params(|params| {
+        params.input_filter_mode = mode;
+    });
+    
+    // Also update current app if it exists
+    GLOBAL_APP_WRAPPER.with(|global| {
+        if let Some(wrapper_ptr) = *global.borrow() {
+            unsafe {
+                let wrapper = &mut *wrapper_ptr;
+                if let Some(app) = &mut wrapper.app {
+                    app.brush_state_mut().params.input_filter_mode = mode;
+                    log::info!("Input filter mode updated to: {:?}", mode);
+                }
+            }
+        }
+    });
+}
+
 /// Clear canvas from JavaScript (WASM only)
 #[cfg(target_arch = "wasm32")]
 pub fn clear_canvas_global() {
