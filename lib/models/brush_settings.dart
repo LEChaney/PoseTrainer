@@ -17,10 +17,16 @@ class BrushSettings extends HiveObject {
   /// Default: 1.0 (hard edges for clean lines)
   double hardness;
 
+  /// Input filter mode - pen only vs pen+touch
+  /// true = pen only (reject touch/mouse), false = pen+touch (accept all)
+  /// Default: false (accept all input)
+  bool penOnlyMode;
+
   BrushSettings({
     required this.sizeScale,
     required this.flowScale,
     required this.hardness,
+    this.penOnlyMode = false,
   });
 
   /// Default settings matching Flutter BrushParams defaults
@@ -29,6 +35,7 @@ class BrushSettings extends HiveObject {
       sizeScale: kDefaultBrushSizeScale,
       flowScale: kDefaultBrushFlowScale,
       hardness: kDefaultBrushHardness,
+      penOnlyMode: false,
     );
   }
 
@@ -36,11 +43,13 @@ class BrushSettings extends HiveObject {
     double? sizeScale,
     double? flowScale,
     double? hardness,
+    bool? penOnlyMode,
   }) {
     return BrushSettings(
       sizeScale: sizeScale ?? this.sizeScale,
       flowScale: flowScale ?? this.flowScale,
       hardness: hardness ?? this.hardness,
+      penOnlyMode: penOnlyMode ?? this.penOnlyMode,
     );
   }
 
@@ -51,15 +60,19 @@ class BrushSettings extends HiveObject {
           runtimeType == other.runtimeType &&
           sizeScale == other.sizeScale &&
           flowScale == other.flowScale &&
-          hardness == other.hardness;
+          hardness == other.hardness &&
+          penOnlyMode == other.penOnlyMode;
 
   @override
   int get hashCode =>
-      sizeScale.hashCode ^ flowScale.hashCode ^ hardness.hashCode;
+      sizeScale.hashCode ^
+      flowScale.hashCode ^
+      hardness.hashCode ^
+      penOnlyMode.hashCode;
 
   @override
   String toString() {
-    return 'BrushSettings(sizeScale: $sizeScale, flowScale: $flowScale, hardness: $hardness)';
+    return 'BrushSettings(sizeScale: $sizeScale, flowScale: $flowScale, hardness: $hardness, penOnlyMode: $penOnlyMode)';
   }
 }
 
@@ -70,10 +83,27 @@ class BrushSettingsAdapter extends TypeAdapter<BrushSettings> {
 
   @override
   BrushSettings read(BinaryReader reader) {
+    final sizeScale = reader.readDouble();
+    final flowScale = reader.readDouble();
+    final hardness = reader.readDouble();
+
+    // Migration: handle old data without penOnlyMode field
+    // Try to read penOnlyMode, but default to false if not available
+    bool penOnlyMode = false;
+    try {
+      if (reader.availableBytes > 0) {
+        penOnlyMode = reader.readBool();
+      }
+    } catch (e) {
+      // Old data format, use default
+      penOnlyMode = false;
+    }
+
     return BrushSettings(
-      sizeScale: reader.readDouble(),
-      flowScale: reader.readDouble(),
-      hardness: reader.readDouble(),
+      sizeScale: sizeScale,
+      flowScale: flowScale,
+      hardness: hardness,
+      penOnlyMode: penOnlyMode,
     );
   }
 
@@ -82,6 +112,7 @@ class BrushSettingsAdapter extends TypeAdapter<BrushSettings> {
     writer.writeDouble(obj.sizeScale);
     writer.writeDouble(obj.flowScale);
     writer.writeDouble(obj.hardness);
+    writer.writeBool(obj.penOnlyMode);
   }
 }
 

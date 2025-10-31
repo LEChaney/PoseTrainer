@@ -96,6 +96,9 @@ class _PracticeScreenState extends State<PracticeScreen>
       tag: 'Practice',
     );
 
+    // Load saved pen-only mode
+    _penOnlyMode = savedSettings.penOnlyMode;
+
     // Pick canvas size: use reference image dimensions if available; otherwise a square fallback.
     final w = widget.reference?.width ?? 1200;
     final h = widget.reference?.height ?? 1200;
@@ -347,10 +350,19 @@ class _PracticeScreenState extends State<PracticeScreen>
           icon: Icon(_penOnlyMode ? Icons.draw : Icons.touch_app),
           onPressed: () {
             setState(() => _penOnlyMode = !_penOnlyMode);
+
             // Update WASM service
             _wasmService?.setInputFilterMode(_penOnlyMode);
+
+            // Save to persistent storage
+            final savedSettings = BrushSettingsService.load();
+            final updatedSettings = savedSettings.copyWith(
+              penOnlyMode: _penOnlyMode,
+            );
+            BrushSettingsService.save(updatedSettings);
+
             debugLog(
-              'Input filter mode: ${_penOnlyMode ? 'Pen Only' : 'Pen+Touch'}',
+              'Input filter mode changed and saved: ${_penOnlyMode ? 'Pen Only' : 'Pen+Touch'}',
               tag: 'Practice',
             );
           },
@@ -450,8 +462,9 @@ class _PracticeScreenState extends State<PracticeScreen>
             _wasmService!.setBrushSize(savedSettings.sizeScale * 100);
             _wasmService!.setBrushFlow(savedSettings.flowScale);
             _wasmService!.setBrushHardness(savedSettings.hardness);
+            _wasmService!.setInputFilterMode(savedSettings.penOnlyMode);
             debugLog(
-              'Applied saved settings to Rust global state (before event loop): size=${savedSettings.sizeScale * 100}, flow=${savedSettings.flowScale}, hardness=${savedSettings.hardness}',
+              'Applied saved settings to Rust global state (before event loop): size=${savedSettings.sizeScale * 100}, flow=${savedSettings.flowScale}, hardness=${savedSettings.hardness}, penOnly=${savedSettings.penOnlyMode}',
               tag: 'Practice',
             );
 
