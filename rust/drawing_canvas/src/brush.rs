@@ -89,14 +89,14 @@ impl Default for BrushParams {
     fn default() -> Self {
         Self {
             size: 30.0,
-            flow: 0.4,
+            flow: 1.0,
             hardness: 1.0,
             spacing: 0.05,
             color: [163.0 / 255.0, 2.0 / 255.0, 222.0 / 255.0, 1.0],
             pressure_mapping: PressureMapping::Both,
             min_size_percent: 0.2,
             min_flow_percent: 0.0,
-            size_gamma: 1.8,
+            size_gamma: 1.4,
             flow_gamma: 1.0,
         }
     }
