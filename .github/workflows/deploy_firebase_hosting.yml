@@ -38,7 +38,12 @@ jobs:
         run: flutter pub get
 
       - name: Build Flutter Web
-        run: flutter build web --wasm --release --base-href "/"
+        run: flutter build web --wasm --release --base-href "/" --build-number=${{ github.run_number }}
+
+      - name: Post-process build for cache busting
+        run: |
+          chmod +x tools/post_build_web.sh
+          bash tools/post_build_web.sh
 
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
