@@ -97,8 +97,8 @@ impl Default for BrushParams {
             color: [163.0 / 255.0, 2.0 / 255.0, 222.0 / 255.0, 1.0],
             pressure_mapping: PressureMapping::Both,
             min_size_percent: 0.2,
-            min_flow_percent: 0.5,
-            size_gamma: 1.4,
+            min_flow_percent: 0.1,
+            size_gamma: 1.2,
             flow_gamma: 0.9,
             input_filter_mode: InputFilterMode::default(),
         }
