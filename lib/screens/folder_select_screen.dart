@@ -1052,6 +1052,9 @@ class _DriveSessionRunnerScreenState extends State<_DriveSessionRunnerScreen> {
         _currentImage = null;
       });
       _loadCurrentImage();
+    } else if (reviewResult.action == ReviewAction.repeat) {
+      // Retry the same image without advancing
+      _startPractice();
     } else {
       // End session -> go to history
       Navigator.of(context).pushReplacement(
