@@ -683,8 +683,8 @@ class GoogleDriveFolderService extends ChangeNotifier {
     // Randomly select the folder that will be sampled for each image
     // This ensures uniform distribution across folders
     final random = math.Random();
-    final sampledFolders = <String>{};
-    while (sampledFolders.length < math.min(folderIds.length, count)) {
+    final sampledFolders = <String>[];
+    while (sampledFolders.length < count) {
       sampledFolders.add(folderIds[random.nextInt(folderIds.length)]);
     }
 
