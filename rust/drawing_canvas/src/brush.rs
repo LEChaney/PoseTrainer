@@ -26,10 +26,16 @@ pub struct BrushParams {
     /// e.g., 0.1 = 10% of size, 1.0 = 100% (no pressure effect on size)
     /// Only applies when Size or Both pressure mapping is enabled
     pub min_size_percent: f32,
+    /// Flow coefficient - maximum flow scaling factor at full pressure
+    /// Can be greater than 1.0 for increased size up speed (clamped at 1.0 in dab creation)
+    pub max_size_percent: f32,
     /// Minimum flow as a fraction of full flow at zero pressure (0.0-1.0)
     /// e.g., 0.0 = fully transparent at zero pressure, 1.0 = no pressure effect on flow
     /// Only applies when Flow or Both pressure mapping is enabled
     pub min_flow_percent: f32,
+    /// Flow coefficient - maximum flow scaling factor at full pressure
+    /// Can be greater than 1.0 for increased flow up speed (clamped at 1.0 in dab creation)
+    pub max_flow_percent: f32,
     /// Size pressure curve gamma
     /// <1.0 = aggressive early growth, =1.0 = linear, >1.0 = delayed growth
     pub size_gamma: f32,
@@ -93,13 +99,15 @@ impl Default for BrushParams {
             size: 30.0,
             flow: 1.0,
             hardness: 1.0,
-            spacing: 0.05,
+            spacing: 0.2,
             color: [163.0 / 255.0, 2.0 / 255.0, 222.0 / 255.0, 1.0],
             pressure_mapping: PressureMapping::Both,
-            min_size_percent: 0.2,
-            min_flow_percent: 0.1,
-            size_gamma: 1.2,
-            flow_gamma: 0.9,
+            min_size_percent: 0.0,
+            max_size_percent: 4.0,
+            min_flow_percent: 0.0,
+            max_flow_percent: 4.0,
+            size_gamma: 1.0,
+            flow_gamma: 1.0,
             input_filter_mode: InputFilterMode::default(),
         }
     }
@@ -312,8 +320,8 @@ impl BrushState {
                     pressure,
                     self.params.flow_gamma,
                     self.params.min_flow_percent,
-                    1.0,
-                );
+                    self.params.max_flow_percent,
+                ).clamp(0.0, 1.0);
                 (self.params.size, self.params.flow * flow_scale)
             }
             PressureMapping::Size => {
@@ -321,8 +329,8 @@ impl BrushState {
                     pressure,
                     self.params.size_gamma,
                     self.params.min_size_percent,
-                    1.0,
-                );
+                    self.params.max_size_percent,
+                ).clamp(0.0, 1.0);
                 (self.params.size * size_scale, self.params.flow)
             }
             PressureMapping::Both => {
@@ -330,14 +338,14 @@ impl BrushState {
                     pressure,
                     self.params.size_gamma,
                     self.params.min_size_percent,
-                    1.0,
-                );
+                    self.params.max_size_percent,
+                ).clamp(0.0, 1.0);
                 let flow_scale = BrushParams::apply_pressure_curve(
                     pressure,
                     self.params.flow_gamma,
                     self.params.min_flow_percent,
-                    1.0,
-                );
+                    self.params.max_flow_percent,
+                ).clamp(0.0, 1.0);
                 (self.params.size * size_scale, self.params.flow * flow_scale)
             }
             PressureMapping::None => {
