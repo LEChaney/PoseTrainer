@@ -102,12 +102,12 @@ impl Default for BrushParams {
             spacing: 0.15,
             color: [163.0 / 255.0, 2.0 / 255.0, 222.0 / 255.0, 1.0],
             pressure_mapping: PressureMapping::Both,
-            min_size_percent: 0.0,
+            min_size_percent: 0.3,
             max_size_percent: 4.0,
             min_flow_percent: 0.05,
-            max_flow_percent: 4.0,
-            size_gamma: 1.2,
-            flow_gamma: 1.8,
+            max_flow_percent: 6.0,
+            size_gamma: 1.8,
+            flow_gamma: 1.2,
             input_filter_mode: InputFilterMode::default(),
         }
     }
