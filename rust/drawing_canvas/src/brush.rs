@@ -99,15 +99,15 @@ impl Default for BrushParams {
             size: 30.0,
             flow: 1.0,
             hardness: 1.0,
-            spacing: 0.15,
+            spacing: 0.125,
             color: [163.0 / 255.0, 2.0 / 255.0, 222.0 / 255.0, 1.0],
             pressure_mapping: PressureMapping::Both,
-            min_size_percent: 0.3,
+            min_size_percent: 0.5,
             max_size_percent: 4.0,
-            min_flow_percent: 0.05,
-            max_flow_percent: 6.0,
-            size_gamma: 1.8,
-            flow_gamma: 1.2,
+            min_flow_percent: 0.1,
+            max_flow_percent: 1.0,
+            size_gamma: 1.0,
+            flow_gamma: 1.0,
             input_filter_mode: InputFilterMode::default(),
         }
     }
@@ -278,9 +278,10 @@ impl BrushState {
         let segment_distance = (dx * dx + dy * dy).sqrt();
 
         // Calculate actual spacing in pixels as a percentage of brush diameter
-        // Clamp spacing ratio to a minimum to avoid division by zero and ensure reasonable behavior
-        let spacing_ratio = self.params.spacing.max(0.01);
-        let spacing_px = spacing_ratio * self.params.size;
+        // Clamp spacing px to half a pixel minimum to avoid infinite loops, and still allow for sub-pixel spacing
+        let spacing_ratio = self.params.spacing;
+        let min_spacing_px = 0.5;
+        let mut spacing_px = (spacing_ratio * self.calculate_size_at_pressure(prev_pressure)).max(min_spacing_px);
 
         let mut remaining_distance = segment_distance;
         while remaining_distance >= spacing_px {
@@ -307,51 +308,51 @@ impl BrushState {
             self.last_dab_position = Some(dab.position);
             self.last_dab_pressure = dab_pressure;
             remaining_distance -= spacing_px;
+            spacing_px = (spacing_ratio * dab.size).max(min_spacing_px);
         }
 
         dabs
     }
 
+    /// Calculate the brush size at a given pressure value
+    fn calculate_size_at_pressure(&self, pressure: f32) -> f32 {
+        match self.params.pressure_mapping {
+            PressureMapping::Size | PressureMapping::Both => {
+                let size_scale = BrushParams::apply_pressure_curve(
+                    pressure,
+                    self.params.size_gamma,
+                    self.params.min_size_percent,
+                    self.params.max_size_percent,
+                ).clamp(0.0, 1.0);
+                self.params.size * size_scale
+            }
+            PressureMapping::Flow | PressureMapping::None => {
+                self.params.size
+            }
+        }
+    }
+
+    fn calculate_flow_at_pressure(&self, pressure: f32) -> f32 {
+        match self.params.pressure_mapping {
+            PressureMapping::Flow | PressureMapping::Both => {
+                let flow_scale = BrushParams::apply_pressure_curve(
+                    pressure,
+                    self.params.flow_gamma,
+                    self.params.min_flow_percent,
+                    self.params.max_flow_percent,
+                ).clamp(0.0, 1.0);
+                self.params.flow * flow_scale
+            }
+            PressureMapping::Size | PressureMapping::None => {
+                self.params.flow
+            }
+        }
+    }
+
     /// Create a single dab with pressure applied
     fn create_dab(&self, position: [f32; 2], pressure: f32) -> BrushDab {
-        let (size, opacity) = match self.params.pressure_mapping {
-            PressureMapping::Flow => {
-                let flow_scale = BrushParams::apply_pressure_curve(
-                    pressure,
-                    self.params.flow_gamma,
-                    self.params.min_flow_percent,
-                    self.params.max_flow_percent,
-                ).clamp(0.0, 1.0);
-                (self.params.size, self.params.flow * flow_scale)
-            }
-            PressureMapping::Size => {
-                let size_scale = BrushParams::apply_pressure_curve(
-                    pressure,
-                    self.params.size_gamma,
-                    self.params.min_size_percent,
-                    self.params.max_size_percent,
-                ).clamp(0.0, 1.0);
-                (self.params.size * size_scale, self.params.flow)
-            }
-            PressureMapping::Both => {
-                let size_scale = BrushParams::apply_pressure_curve(
-                    pressure,
-                    self.params.size_gamma,
-                    self.params.min_size_percent,
-                    self.params.max_size_percent,
-                ).clamp(0.0, 1.0);
-                let flow_scale = BrushParams::apply_pressure_curve(
-                    pressure,
-                    self.params.flow_gamma,
-                    self.params.min_flow_percent,
-                    self.params.max_flow_percent,
-                ).clamp(0.0, 1.0);
-                (self.params.size * size_scale, self.params.flow * flow_scale)
-            }
-            PressureMapping::None => {
-                (self.params.size, self.params.flow)
-            }
-        };
+        let size = self.calculate_size_at_pressure(pressure);
+        let opacity = self.calculate_flow_at_pressure(pressure);
 
         BrushDab {
             position,
