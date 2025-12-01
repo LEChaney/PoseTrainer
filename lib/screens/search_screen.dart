@@ -30,9 +30,12 @@ class _SearchScreenState extends State<SearchScreen>
     with SingleTickerProviderStateMixin {
   final _controller = TextEditingController(text: 'favcount:>100');
   int _count = 5;
-  int _seconds = 60;
+  int _minutes = 1;
+  int _seconds = 0;
   bool _unlimited = false;
-  final _secondsController = TextEditingController(text: '60');
+  bool _customTime = false; // true when user selects "Custom" from dropdown
+  final _minutesController = TextEditingController(text: '1');
+  final _secondsController = TextEditingController(text: '0');
   final Set<String> _selectedIds = <String>{};
   bool _manualOverlay = false;
   final ScrollController _scrollController = ScrollController();
@@ -46,6 +49,18 @@ class _SearchScreenState extends State<SearchScreen>
   bool _disableImages = false; // when true, do not build Image.network
   bool _debugCorsSafeImages = false; // when true, use CORS-safe debug images
   // HUD ticker moved into the HUD widget to avoid rebuilding the whole screen.
+
+  /// Common time presets as (minutes, seconds) pairs. -1 means "Custom".
+  static const List<(int, int, String)> _timePresets = [
+    (0, 30, '30s'),
+    (1, 0, '1m'),
+    (2, 0, '2m'),
+    (5, 0, '5m'),
+    (10, 0, '10m'),
+    (15, 0, '15m'),
+    (30, 0, '30m'),
+    (-1, -1, 'Custom'),
+  ];
 
   @override
   void initState() {
@@ -77,6 +92,7 @@ class _SearchScreenState extends State<SearchScreen>
 
   @override
   void dispose() {
+    _minutesController.dispose();
     _secondsController.dispose();
     _overlayController.dispose();
     _scrollController.removeListener(_onScroll);
@@ -216,6 +232,7 @@ class _SearchScreenState extends State<SearchScreen>
                 key: _collapsedKey,
                 child: _CollapsedControlsBar(
                   count: _count,
+                  minutes: _minutes,
                   seconds: _seconds,
                   unlimited: _unlimited,
                   onStart: search.results.isEmpty
@@ -358,11 +375,14 @@ class _SearchScreenState extends State<SearchScreen>
       MaterialPageRoute(
         builder: (_) => SessionRunnerScreen(
           items: items,
-          secondsPerImage: _unlimited ? null : _seconds,
+          secondsPerImage: _unlimited ? null : _totalSeconds,
         ),
       ),
     );
   }
+
+  /// Helper to get total seconds from minutes + seconds
+  int get _totalSeconds => _minutes * 60 + _seconds;
 
   /// Builds the fully expanded header (search + controls) used by the overlay.
   Widget _buildExpandedHeader(ReferenceSearchService search) {
@@ -395,7 +415,7 @@ class _SearchScreenState extends State<SearchScreen>
                       children: [
                         Expanded(child: _buildCountCluster()),
                         const SizedBox(width: 12),
-                        Expanded(child: _buildSecondsCluster()),
+                        Expanded(child: _buildTimeCluster()),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -420,50 +440,55 @@ class _SearchScreenState extends State<SearchScreen>
                   icon: const Icon(Icons.add),
                 ),
                 const SizedBox(width: 16),
-                const Text('Seconds'),
+                const Text('Time'),
                 const SizedBox(width: 6),
-                SizedBox(
-                  width: 84,
-                  child: TextField(
-                    enabled: !_unlimited,
-                    controller: _secondsController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 8,
+                _buildTimeDropdown(),
+                if (_customTime) ...[
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 48,
+                    child: TextField(
+                      enabled: !_unlimited,
+                      controller: _minutesController,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
                       ),
-                      hintText: 'e.g. 60',
+                      onChanged: (v) {
+                        final parsed = int.tryParse(v) ?? _minutes;
+                        setState(() => _minutes = parsed.clamp(0, 60));
+                      },
                     ),
-                    onChanged: (v) {
-                      final parsed = int.tryParse(v) ?? _seconds;
-                      setState(() => _seconds = parsed.clamp(1, 3600));
-                    },
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  tooltip: '−10s',
-                  onPressed: _unlimited
-                      ? null
-                      : () => setState(() {
-                          _seconds = (_seconds - 10).clamp(1, 3600);
-                          _secondsController.text = '$_seconds';
-                        }),
-                  icon: const Icon(Icons.remove),
-                ),
-                IconButton(
-                  tooltip: '+10s',
-                  onPressed: _unlimited
-                      ? null
-                      : () => setState(() {
-                          _seconds = (_seconds + 10).clamp(1, 3600);
-                          _secondsController.text = '$_seconds';
-                        }),
-                  icon: const Icon(Icons.add),
-                ),
+                  const Text('m'),
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    width: 48,
+                    child: TextField(
+                      enabled: !_unlimited,
+                      controller: _secondsController,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
+                      ),
+                      onChanged: (v) {
+                        final parsed = int.tryParse(v) ?? _seconds;
+                        setState(() => _seconds = parsed.clamp(0, 59));
+                      },
+                    ),
+                  ),
+                  const Text('s'),
+                ],
                 const SizedBox(width: 12),
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -527,61 +552,129 @@ class _SearchScreenState extends State<SearchScreen>
     );
   }
 
-  /// Builds the compact 'Seconds' cluster with field and +/-10s buttons.
-  Widget _buildSecondsCluster() {
+  /// Builds the compact 'Time' cluster with dropdown for presets + custom entry.
+  Widget _buildTimeCluster() {
     final theme = Theme.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Seconds', style: theme.textTheme.labelMedium),
+        Text('Time', style: theme.textTheme.labelMedium),
         const SizedBox(height: 4),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 84,
-              child: TextField(
-                enabled: !_unlimited,
-                controller: _secondsController,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 8,
+        // Dropdown for preset times
+        _buildTimeDropdown(),
+        // Show manual entry fields only when "Custom" is selected
+        if (_customTime) ...[
+          const SizedBox(height: 8),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Minutes field
+              SizedBox(
+                width: 48,
+                child: TextField(
+                  enabled: !_unlimited,
+                  controller: _minutesController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  textAlign: TextAlign.center,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 8,
+                    ),
+                    hintText: '0',
                   ),
-                  hintText: 'e.g. 60',
+                  onChanged: (v) {
+                    final parsed = int.tryParse(v) ?? _minutes;
+                    setState(() => _minutes = parsed.clamp(0, 60));
+                  },
                 ),
-                onChanged: (v) {
-                  final parsed = int.tryParse(v) ?? _seconds;
-                  setState(() => _seconds = parsed.clamp(1, 3600));
-                },
               ),
-            ),
-            const SizedBox(width: 8),
-            _smallTonalButton(
-              label: '−10',
-              onPressed: _unlimited
-                  ? null
-                  : () => setState(() {
-                      _seconds = (_seconds - 10).clamp(1, 3600);
-                      _secondsController.text = '$_seconds';
-                    }),
-            ),
-            const SizedBox(width: 8),
-            _smallTonalButton(
-              label: '+10',
-              onPressed: _unlimited
-                  ? null
-                  : () => setState(() {
-                      _seconds = (_seconds + 10).clamp(1, 3600);
-                      _secondsController.text = '$_seconds';
-                    }),
-            ),
-          ],
-        ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text('m', style: theme.textTheme.bodyMedium),
+              ),
+              // Seconds field
+              SizedBox(
+                width: 48,
+                child: TextField(
+                  enabled: !_unlimited,
+                  controller: _secondsController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  textAlign: TextAlign.center,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 8,
+                    ),
+                    hintText: '0',
+                  ),
+                  onChanged: (v) {
+                    final parsed = int.tryParse(v) ?? _seconds;
+                    setState(() => _seconds = parsed.clamp(0, 59));
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: Text('s', style: theme.textTheme.bodyMedium),
+              ),
+            ],
+          ),
+        ],
       ],
+    );
+  }
+
+  /// Builds a dropdown for time presets (used in wide layout).
+  Widget _buildTimeDropdown() {
+    // Find current selection in presets, or null if custom
+    String? currentPreset;
+    if (!_customTime) {
+      for (final preset in _timePresets) {
+        if (preset.$1 == _minutes && preset.$2 == _seconds) {
+          currentPreset = preset.$3;
+          break;
+        }
+      }
+      // If current values don't match any preset, treat as custom
+      if (currentPreset == null) {
+        _customTime = true;
+      }
+    }
+    if (_customTime) {
+      currentPreset = 'Custom';
+    }
+
+    return DropdownButton<String>(
+      value: currentPreset,
+      isDense: true,
+      underline: const SizedBox.shrink(),
+      items: _timePresets.map((preset) {
+        return DropdownMenuItem(value: preset.$3, child: Text(preset.$3));
+      }).toList(),
+      onChanged: _unlimited
+          ? null
+          : (value) {
+              if (value == null) return;
+              final preset = _timePresets.firstWhere((p) => p.$3 == value);
+              setState(() {
+                if (preset.$1 == -1) {
+                  // Custom selected
+                  _customTime = true;
+                } else {
+                  _customTime = false;
+                  _minutes = preset.$1;
+                  _seconds = preset.$2;
+                  _minutesController.text = '$_minutes';
+                  _secondsController.text = '$_seconds';
+                }
+              });
+            },
     );
   }
 
@@ -611,23 +704,6 @@ class _SearchScreenState extends State<SearchScreen>
         padding: EdgeInsets.zero,
         iconSize: 20,
         icon: Icon(icon),
-      ),
-    );
-  }
-
-  /// Compact utility: small tonal text button.
-  Widget _smallTonalButton({required String label, VoidCallback? onPressed}) {
-    return SizedBox(
-      height: 36,
-      child: FilledButton.tonal(
-        onPressed: onPressed,
-        style: ButtonStyle(
-          padding: WidgetStateProperty.all(
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          ),
-          minimumSize: WidgetStateProperty.all(const Size(0, 36)),
-        ),
-        child: Text(label),
       ),
     );
   }
@@ -1056,12 +1132,14 @@ class _SearchProfilerHudState extends State<_SearchProfilerHud> {
 /// Compact, collapsed controls shown when the user scrolls down.
 class _CollapsedControlsBar extends StatelessWidget {
   final int count;
+  final int minutes;
   final int seconds;
   final bool unlimited;
   final VoidCallback? onStart;
   final VoidCallback onExpand;
   const _CollapsedControlsBar({
     required this.count,
+    required this.minutes,
     required this.seconds,
     required this.unlimited,
     required this.onExpand,
@@ -1088,7 +1166,7 @@ class _CollapsedControlsBar extends StatelessWidget {
           Text('Count: $count', style: theme.textTheme.bodyMedium),
           const SizedBox(width: 12),
           Text(
-            unlimited ? 'Unlimited' : 'Seconds: $seconds',
+            unlimited ? 'Unlimited' : '${minutes}m ${seconds}s',
             style: theme.textTheme.bodyMedium,
           ),
           const Spacer(),
