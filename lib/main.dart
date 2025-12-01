@@ -17,6 +17,7 @@ import 'services/reference_search_service.dart';
 import 'services/session_service.dart';
 import 'services/session_repository.dart';
 import 'services/google_drive_folder_service.dart';
+import 'services/e621_settings_service.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'services/persistence_util.dart';
 import 'services/debug_logger.dart';
@@ -33,6 +34,9 @@ void main() async {
 
   // Initialize brush settings service
   await BrushSettingsService.init();
+
+  // Initialize e621 settings service
+  await E621SettingsService.init();
 
   // Ask browser to make storage persistent (reduce eviction risk).
   await requestPersistentStorage();

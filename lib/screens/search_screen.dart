@@ -28,9 +28,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen>
     with SingleTickerProviderStateMixin {
-  final _controller = TextEditingController(
-    text: 'standing canine favcount:>100',
-  );
+  final _controller = TextEditingController(text: 'favcount:>100');
   int _count = 5;
   int _seconds = 60;
   bool _unlimited = false;

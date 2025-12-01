@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'e621_settings_service.dart';
 
 // reference_search_service.dart
 // -----------------------------
@@ -41,12 +42,6 @@ class ReferenceSearchService extends ChangeNotifier {
   /// Perform a new search. Replaces any existing results.
   Future<void> search(String tags) async {
     final cleaned = tags.trim();
-    if (cleaned.isEmpty) {
-      _results = [];
-      _error = null;
-      notifyListeners();
-      return;
-    }
     _loading = true;
     _error = null;
     _results = [];
@@ -54,9 +49,7 @@ class ReferenceSearchService extends ChangeNotifier {
     try {
       // Collapse whitespace to '+' which e621 expects for tag separation.
       final q = cleaned.replaceAll(RegExp(r'\s+'), '+');
-      final uri = Uri.parse(
-        'https://e621.net/posts.json?limit=30&tags=rating:safe+-cub+$q',
-      );
+      final uri = Uri.parse(E621SettingsService.instance.buildQueryUrl(q));
       final resp = await http.get(
         uri,
         headers: const {

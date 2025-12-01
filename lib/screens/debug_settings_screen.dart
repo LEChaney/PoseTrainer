@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/debug_logger.dart';
+import '../services/e621_settings_service.dart';
 
 class DebugSettingsScreen extends StatefulWidget {
   const DebugSettingsScreen({super.key});
@@ -15,9 +16,16 @@ class DebugSettingsScreen extends StatefulWidget {
 
 class _DebugSettingsScreenState extends State<DebugSettingsScreen> {
   final _urlController = TextEditingController();
+  final _customTagsController = TextEditingController();
+  final _pageLimitController = TextEditingController();
+  final _baseUrlController = TextEditingController();
   late bool _networkLoggingEnabled;
   late bool _fileLoggingEnabled;
   late LogLevel _minLevel;
+
+  // e621 settings
+  late E621Rating _e621Rating;
+  late bool _e621ExcludeCub;
 
   @override
   void initState() {
@@ -26,18 +34,29 @@ class _DebugSettingsScreenState extends State<DebugSettingsScreen> {
 
     // Listen for settings changes
     DebugLogger.instance.addListener(_onSettingsChanged);
+    E621SettingsService.instance.addListener(_onE621SettingsChanged);
   }
 
   @override
   void dispose() {
     DebugLogger.instance.removeListener(_onSettingsChanged);
+    E621SettingsService.instance.removeListener(_onE621SettingsChanged);
     _urlController.dispose();
+    _customTagsController.dispose();
+    _pageLimitController.dispose();
+    _baseUrlController.dispose();
     super.dispose();
   }
 
   void _onSettingsChanged() {
     if (mounted) {
       _loadSettings();
+    }
+  }
+
+  void _onE621SettingsChanged() {
+    if (mounted) {
+      _loadE621Settings();
     }
   }
 
@@ -53,7 +72,32 @@ class _DebugSettingsScreenState extends State<DebugSettingsScreen> {
         ? savedUrl
         : 'http://192.168.1.100:8080/logs';
 
+    // Load e621 settings
+    _loadE621Settings();
+
     // Update UI to reflect loaded settings
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _loadE621Settings() {
+    final e621 = E621SettingsService.instance;
+    _e621Rating = e621.rating;
+    _e621ExcludeCub = e621.excludeCub;
+
+    // Only update text controllers if they differ from the service value
+    // to avoid overwriting user input mid-typing
+    if (_baseUrlController.text != e621.baseUrl) {
+      _baseUrlController.text = e621.baseUrl;
+    }
+    if (_customTagsController.text != e621.customTags) {
+      _customTagsController.text = e621.customTags;
+    }
+    if (_pageLimitController.text != e621.pageLimit.toString()) {
+      _pageLimitController.text = e621.pageLimit.toString();
+    }
+
     if (mounted) {
       setState(() {});
     }
@@ -363,6 +407,225 @@ class _DebugSettingsScreenState extends State<DebugSettingsScreen> {
                     ),
                   ],
                 ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // e621 API Settings Section
+            Text(
+              'e621 API Settings',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Configure search query parameters for e621 reference images',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+
+            // Base URL
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Base URL',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _baseUrlController,
+                      decoration: const InputDecoration(
+                        hintText: 'https://e621.net',
+                        border: OutlineInputBorder(),
+                        helperText: 'API base URL (e.g., https://e621.net)',
+                      ),
+                      keyboardType: TextInputType.url,
+                      onChanged: (value) {
+                        E621SettingsService.instance.setBaseUrl(value);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Rating Filter
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Rating Filter',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    ...E621Rating.values.map((rating) {
+                      return RadioListTile<E621Rating>(
+                        title: Text(rating.displayName),
+                        subtitle: rating.value.isNotEmpty
+                            ? Text('rating:${rating.value}')
+                            : const Text('No rating restriction'),
+                        value: rating,
+                        groupValue: _e621Rating,
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() {
+                              _e621Rating = value;
+                            });
+                            E621SettingsService.instance.setRating(value);
+                          }
+                        },
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Other Settings
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Other Settings',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Exclude cub toggle
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Exclude cub content'),
+                              Text(
+                                'Adds -cub tag to all searches',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: _e621ExcludeCub,
+                          onChanged: (value) {
+                            setState(() {
+                              _e621ExcludeCub = value;
+                            });
+                            E621SettingsService.instance.setExcludeCub(value);
+                          },
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Page limit
+                    TextField(
+                      controller: _pageLimitController,
+                      decoration: const InputDecoration(
+                        labelText: 'Results per page',
+                        hintText: '30',
+                        border: OutlineInputBorder(),
+                        helperText: 'Max 320',
+                      ),
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      onChanged: (value) {
+                        final parsed = int.tryParse(value);
+                        if (parsed != null) {
+                          E621SettingsService.instance.setPageLimit(parsed);
+                        }
+                      },
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Custom tags
+                    TextField(
+                      controller: _customTagsController,
+                      decoration: const InputDecoration(
+                        labelText: 'Custom fixed tags',
+                        hintText: 'e.g., order:score -animated',
+                        border: OutlineInputBorder(),
+                        helperText:
+                            'Space-separated tags added to every search',
+                      ),
+                      onChanged: (value) {
+                        E621SettingsService.instance.setCustomTags(value);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // URL Preview
+            Card(
+              color: Colors.grey[100],
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.preview, color: Colors.grey[700]),
+                        const SizedBox(width: 8),
+                        Text(
+                          'URL Preview',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      E621SettingsService.instance.previewUrl,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Reset button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  E621SettingsService.instance.resetToDefaults();
+                  _loadE621Settings();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('e621 settings reset to defaults'),
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.restore),
+                label: const Text('Reset e621 Settings to Defaults'),
               ),
             ),
 
