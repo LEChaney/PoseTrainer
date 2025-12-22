@@ -140,10 +140,7 @@ class ReferenceDrawSplit extends StatelessWidget {
     Widget inner;
     if (referenceImage != null) {
       inner = letterboxReference
-          ? LetterboxedImage(
-              image: referenceImage!,
-              background: kReferencePanelColor,
-            )
+          ? LetterboxedImage(image: referenceImage!, background: kPaperColor)
           : RawImage(image: referenceImage!);
     } else if (referenceUrl != null) {
       inner = Image.network(
@@ -157,7 +154,7 @@ class ReferenceDrawSplit extends StatelessWidget {
       inner = const Center(child: Text('No reference'));
     }
     return DecoratedBox(
-      decoration: const BoxDecoration(color: kReferencePanelColor),
+      decoration: const BoxDecoration(color: kPaperColor),
       child: Center(child: inner),
     );
   }
