@@ -59,16 +59,25 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
   final _minutesController = TextEditingController(text: '1');
   final _secondsController = TextEditingController(text: '0');
 
-  /// Common time presets as (minutes, seconds, label) tuples. -1 means "Custom".
+  // Sequential mode options
+  bool _sequential =
+      false; // When true, images are shown in order instead of randomly
+  bool _randomStart = false; // When sequential, start from a random position
+
+  /// Common time presets as (minutes, seconds, label) tuples.
+  /// -1 means "Custom", -2 means "Unlimited".
   static const List<(int, int, String)> _timePresets = [
     (0, 30, '30s'),
     (1, 0, '1m'),
     (2, 0, '2m'),
+    (3, 0, '3m'),
+    (4, 0, '4m'),
     (5, 0, '5m'),
     (10, 0, '10m'),
     (15, 0, '15m'),
     (30, 0, '30m'),
     (-1, -1, 'Custom'),
+    (-2, -2, 'Unlimited'),
   ];
 
   final Set<String> _selectedIds = {};
@@ -468,18 +477,37 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            // Unlimited toggle
+            // Sequential mode toggle
             Row(
               children: [
                 Checkbox(
-                  value: _unlimited,
+                  value: _sequential,
                   onChanged: (v) => setState(() {
-                    _unlimited = v ?? false;
+                    _sequential = v ?? false;
+                    if (!_sequential) _randomStart = false;
                   }),
                 ),
-                const Text('Unlimited time'),
+                const Expanded(
+                  child: Text('Sequential order (instead of random)'),
+                ),
               ],
             ),
+            // Random start offset (only when sequential)
+            if (_sequential)
+              Padding(
+                padding: const EdgeInsets.only(left: 32),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: _randomStart,
+                      onChanged: (v) => setState(() {
+                        _randomStart = v ?? false;
+                      }),
+                    ),
+                    const Expanded(child: Text('Start from random position')),
+                  ],
+                ),
+              ),
             const SizedBox(height: 12),
             // Start session button
             FilledButton(
@@ -728,7 +756,12 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     );
 
     // Sample images from selected folders
-    final images = await service.sampleImages(_selectedIds.toList(), _count);
+    final images = await service.sampleImages(
+      _selectedIds.toList(),
+      _count,
+      sequential: _sequential,
+      randomStart: _randomStart,
+    );
 
     if (!mounted) return;
     Navigator.of(context).pop(); // Close loading dialog
@@ -769,13 +802,17 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     );
   }
 
-  /// Builds a dropdown for time presets with Custom option.
+  /// Builds a dropdown for time presets with Custom and Unlimited options.
   Widget _buildTimeDropdown() {
-    // Find current selection in presets, or null if custom
+    // Find current selection in presets
     String? currentPreset;
-    if (!_customTime) {
+    if (_unlimited) {
+      currentPreset = 'Unlimited';
+    } else if (_customTime) {
+      currentPreset = 'Custom';
+    } else {
       for (final preset in _timePresets) {
-        if (preset.$1 == _minutes && preset.$2 == _seconds) {
+        if (preset.$1 >= 0 && preset.$1 == _minutes && preset.$2 == _seconds) {
           currentPreset = preset.$3;
           break;
         }
@@ -783,10 +820,8 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
       // If current values don't match any preset, treat as custom
       if (currentPreset == null) {
         _customTime = true;
+        currentPreset = 'Custom';
       }
-    }
-    if (_customTime) {
-      currentPreset = 'Custom';
     }
 
     return DropdownButton<String>(
@@ -796,24 +831,29 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
       items: _timePresets.map((preset) {
         return DropdownMenuItem(value: preset.$3, child: Text(preset.$3));
       }).toList(),
-      onChanged: _unlimited
-          ? null
-          : (value) {
-              if (value == null) return;
-              final preset = _timePresets.firstWhere((p) => p.$3 == value);
-              setState(() {
-                if (preset.$1 == -1) {
-                  // Custom selected
-                  _customTime = true;
-                } else {
-                  _customTime = false;
-                  _minutes = preset.$1;
-                  _seconds = preset.$2;
-                  _minutesController.text = '$_minutes';
-                  _secondsController.text = '$_seconds';
-                }
-              });
-            },
+      onChanged: (value) {
+        if (value == null) return;
+        final preset = _timePresets.firstWhere((p) => p.$3 == value);
+        setState(() {
+          if (preset.$1 == -2) {
+            // Unlimited selected
+            _unlimited = true;
+            _customTime = false;
+          } else if (preset.$1 == -1) {
+            // Custom selected
+            _unlimited = false;
+            _customTime = true;
+          } else {
+            // Preset selected
+            _unlimited = false;
+            _customTime = false;
+            _minutes = preset.$1;
+            _seconds = preset.$2;
+            _minutesController.text = '$_minutes';
+            _secondsController.text = '$_seconds';
+          }
+        });
+      },
     );
   }
 }

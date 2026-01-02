@@ -670,18 +670,30 @@ class GoogleDriveFolderService extends ChangeNotifier {
     return imageTypes.any((type) => mimeType.startsWith(type));
   }
 
-  /// Sample random images uniformly from selected folders.
+  /// Sample images from selected folders.
+  ///
+  /// When [sequential] is false (default), images are sampled randomly with
+  /// uniform distribution across folders.
+  ///
+  /// When [sequential] is true, images are returned in order (sorted by name)
+  /// from the first folder, continuing to subsequent folders as needed.
+  /// If [randomStart] is true, the sequence starts from a random position.
   Future<List<DriveImageFile>> sampleImages(
     List<String> folderIds,
-    int count,
-  ) async {
+    int count, {
+    bool sequential = false,
+    bool randomStart = false,
+  }) async {
     infoLog(
-      'Sampling $count images from ${folderIds.length} folders',
+      'Sampling $count images from ${folderIds.length} folders (sequential=$sequential, randomStart=$randomStart)',
       tag: _tag,
     );
 
-    // Randomly select the folder that will be sampled for each image
-    // This ensures uniform distribution across folders
+    if (sequential) {
+      return _sampleSequential(folderIds, count, randomStart: randomStart);
+    }
+
+    // Random sampling: select folders with uniform distribution
     final random = math.Random();
     final sampledFolders = <String>[];
     while (sampledFolders.length < count) {
@@ -719,6 +731,54 @@ class GoogleDriveFolderService extends ChangeNotifier {
     } else {
       infoLog('Sampled ${sampledImages.length} images', tag: _tag);
     }
+    return sampledImages;
+  }
+
+  /// Sample images sequentially from folders.
+  /// Images are sorted by name within each folder, then concatenated.
+  /// If [randomStart] is true, starts from a random position in the combined list.
+  Future<List<DriveImageFile>> _sampleSequential(
+    List<String> folderIds,
+    int count, {
+    bool randomStart = false,
+  }) async {
+    // Collect all images from all folders, sorted by name within each folder
+    final allImages = <DriveImageFile>[];
+
+    for (final folderId in folderIds) {
+      final images = await scanFolder(folderId);
+      // Sort images by name within this folder for consistent ordering
+      images.sort((a, b) => a.name.compareTo(b.name));
+      allImages.addAll(images);
+    }
+
+    if (allImages.isEmpty) {
+      warningLog('No images found in selected folders', tag: _tag);
+      return [];
+    }
+
+    // Determine starting index
+    int startIndex = 0;
+    if (randomStart && allImages.length > 1) {
+      final random = math.Random();
+      startIndex = random.nextInt(allImages.length);
+      infoLog(
+        'Random start index: $startIndex of ${allImages.length}',
+        tag: _tag,
+      );
+    }
+
+    // Select images sequentially from start index, wrapping around if needed
+    final sampledImages = <DriveImageFile>[];
+    for (int i = 0; i < count && i < allImages.length; i++) {
+      final index = (startIndex + i) % allImages.length;
+      sampledImages.add(allImages[index]);
+    }
+
+    infoLog(
+      'Sequential sample: ${sampledImages.length} images starting at index $startIndex',
+      tag: _tag,
+    );
     return sampledImages;
   }
 
