@@ -8,16 +8,12 @@ The main purpose of this app is to gamify drawing practice and provide fast feed
 - Overlay review of drawing and reference image with adjustable opacity
 - Save paired reference + drawing sessions with minimal metadata (source URL, timestamp)
 - e621 tag search (safe default) to pick reference images
-- Google drive folder integration for selecting folders to sample reference images from. (There are some double sign-in flow issues on web, and it is not fully tested on desktop or mobile).
-- Basic (limited) pure flutter based brush engine / canvas. The current implementation has issues with periodic dab opacity artifacts and latency. It also cannot handle more than one stroke color on the canvas, or more complicated pressure based opacity control for brushes.
+- Google drive folder integration for selecting folders to sample reference images from.
 
 ## Tech Stack
 The app should be cross-platform (Windows, iOS, Android, Web) and use Flutter for the UI. Focus is on Web first, as this is the most universal platform and easiest to deploy updates to. The tech stack should be fully wasm compatible to maximize performance on web. Rust and wgpu will be used to implement the drawing canvas and brush engine. This should be runnable as a standalone app so that the drawing experience can be tested independently of the rest of the app, and potentially re-used for other applications in the future.
 
-### Current Implementation
-The current implementation is pure Flutter code, including the drawing canvas and brush engine.
-
-# PoseTrainer – Copilot Instructions
-
-## Requrested Response Style
-You are a senior pair‑programmer and design coach. Respond with explanations, plans, pseudocode, and small single‑file snippets only. Do not implement multi‑file changes or full features unless the user explicitly approves. Prioritize readability, explicit contracts, and tests. Ask clarifying questions before large changes.
+## Next Steps
+- Implement different kinds of exercises beyond timed pose drawing, such as line quality exercises, rotating forms, and form manipulation exercises. Form manipulation should involve intersecting, stacking, bending, and subtracting simple 3D shapes to create more complex forms. See:
+[Minimalist Drawing Plan](https://youtu.be/HLzs_8kgaAY?si=p9eW2ufD4fhByL1t)
+[Exercises Book](https://drive.google.com/file/d/1fCdZeT0cq2ZVQX9CePsI8qOW3nS9CRwb/view)
