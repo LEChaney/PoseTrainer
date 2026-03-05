@@ -183,7 +183,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
   /// The URL to open when the user wants to see the reference directly in their
   /// browser. Prefers the raw image URL; falls back to the source page URL.
   String? get _referenceOpenUrl =>
-      widget.referenceUrl ?? (Uri.tryParse(widget.sourceUrl)?.hasScheme == true
+      widget.referenceUrl ??
+      (Uri.tryParse(widget.sourceUrl)?.hasScheme == true
           ? widget.sourceUrl
           : null);
 
@@ -191,9 +192,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
     final uri = Uri.parse(url);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open $url')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not open $url')));
       }
     }
   }
