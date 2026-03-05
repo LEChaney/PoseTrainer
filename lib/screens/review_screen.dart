@@ -1,7 +1,9 @@
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import '../theme/colors.dart';
@@ -12,6 +14,8 @@ import '../models/practice_session.dart';
 import '../models/review_result.dart';
 import '../services/session_service.dart';
 import '../services/google_drive_folder_service.dart';
+import '../services/image_save_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // review_screen.dart
 // ------------------
@@ -61,6 +65,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   Offset _offset = Offset.zero;
   bool _showHint = true;
   Timer? _hintTimer;
+  bool _saving = false;
 
   // On-demand full image loading for Drive sessions
   ui.Image? _fullReference; // Full resolution reference image
@@ -147,12 +152,160 @@ class _ReviewScreenState extends State<ReviewScreen> {
   /// otherwise the thumbnail from widget.reference.
   ui.Image? get _effectiveReference => _fullReference ?? widget.reference;
 
+  // --- Save helpers ---------------------------------------------------------
+
+  Future<Uint8List?> _imageToBytes(ui.Image img) async {
+    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+    return byteData?.buffer.asUint8List();
+  }
+
+  Future<void> _saveDrawing() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final bytes = await _imageToBytes(widget.drawing);
+      if (bytes == null) throw Exception('Could not encode drawing');
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      await saveImageBytes(bytes, 'drawing_$ts.png');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Save failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  // --- URL helpers -----------------------------------------------------------
+
+  /// The URL to open when the user wants to see the reference directly in their
+  /// browser. Prefers the raw image URL; falls back to the source page URL.
+  String? get _referenceOpenUrl =>
+      widget.referenceUrl ?? (Uri.tryParse(widget.sourceUrl)?.hasScheme == true
+          ? widget.sourceUrl
+          : null);
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open $url')),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveReference() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      Uint8List? bytes;
+      final ref = _effectiveReference;
+      if (ref != null) {
+        bytes = await _imageToBytes(ref);
+      } else if (widget.referenceUrl != null) {
+        final res = await http.get(Uri.parse(widget.referenceUrl!));
+        if (res.statusCode == 200) bytes = res.bodyBytes;
+      }
+      if (bytes == null) throw Exception('Could not retrieve reference image');
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      await saveImageBytes(bytes, 'reference_$ts.png');
+    } catch (e) {
+      if (mounted) {
+        // Offer to open the image directly in a browser tab as a fallback
+        // (covers CORS-blocked fetches on web).
+        final openUrl = _referenceOpenUrl;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Could not download reference directly.'),
+            action: openUrl != null
+                ? SnackBarAction(
+                    label: 'Open in tab',
+                    onPressed: () => _openUrl(openUrl),
+                  )
+                : null,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Review'),
         actions: [
+          // Save images menu
+          if (_saving)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            PopupMenuButton<_SaveOption>(
+              icon: const Icon(Icons.save_alt),
+              tooltip: 'Save image',
+              onSelected: (opt) {
+                switch (opt) {
+                  case _SaveOption.drawing:
+                    _saveDrawing();
+                  case _SaveOption.reference:
+                    _saveReference();
+                  case _SaveOption.openReference:
+                    final u = _referenceOpenUrl;
+                    if (u != null) _openUrl(u);
+                  case _SaveOption.viewSource:
+                    _openUrl(widget.sourceUrl);
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: _SaveOption.drawing,
+                  child: ListTile(
+                    leading: Icon(Icons.brush),
+                    title: Text('Save drawing'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                if (_effectiveReference != null || widget.referenceUrl != null)
+                  const PopupMenuItem(
+                    value: _SaveOption.reference,
+                    child: ListTile(
+                      leading: Icon(Icons.image),
+                      title: Text('Save reference'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                if (_referenceOpenUrl != null)
+                  const PopupMenuItem(
+                    value: _SaveOption.openReference,
+                    child: ListTile(
+                      leading: Icon(Icons.open_in_new),
+                      title: Text('Open reference in new tab'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                if (Uri.tryParse(widget.sourceUrl)?.hasScheme == true)
+                  const PopupMenuItem(
+                    value: _SaveOption.viewSource,
+                    child: ListTile(
+                      leading: Icon(Icons.open_in_browser),
+                      title: Text('View source page'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+              ],
+            ),
           if (widget.sessionControls)
             TextButton(
               onPressed: () {
@@ -987,3 +1140,5 @@ class _InteractiveOverlayState extends State<_InteractiveOverlay> {
 }
 
 // Legacy side-by-side widgets removed in favor of ReferenceDrawSplit.
+
+enum _SaveOption { drawing, reference, openReference, viewSource }
