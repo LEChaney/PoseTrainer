@@ -20,6 +20,9 @@ class ReferenceDrawSplit extends StatelessWidget {
   final Widget? leftRail; // optional fixed UI column on far left (wide only)
   final bool letterboxReference;
   final bool letterboxDrawing;
+  final bool hideReference; // memory mode: hide the reference panel
+  final int?
+  memoryCountdownSeconds; // seconds until reference hides (null = no countdown)
 
   const ReferenceDrawSplit({
     super.key,
@@ -31,6 +34,8 @@ class ReferenceDrawSplit extends StatelessWidget {
     this.leftRail,
     this.letterboxReference = true,
     this.letterboxDrawing = false,
+    this.hideReference = false,
+    this.memoryCountdownSeconds,
   });
 
   @override
@@ -137,6 +142,25 @@ class ReferenceDrawSplit extends StatelessWidget {
   }
 
   Widget _buildReference() {
+    if (hideReference) {
+      return DecoratedBox(
+        decoration: BoxDecoration(color: Colors.grey[900]),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.visibility_off, size: 48, color: Colors.grey[600]),
+              const SizedBox(height: 12),
+              Text(
+                'Drawing from memory',
+                style: TextStyle(color: Colors.grey[500], fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     Widget inner;
     if (referenceImage != null) {
       inner = letterboxReference
@@ -155,7 +179,41 @@ class ReferenceDrawSplit extends StatelessWidget {
     }
     return DecoratedBox(
       decoration: const BoxDecoration(color: kPaperColor),
-      child: Center(child: inner),
+      child: Stack(
+        children: [
+          Center(child: inner),
+          if (memoryCountdownSeconds != null)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.visibility_off,
+                      size: 16,
+                      color: Colors.white70,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Hiding in ${memoryCountdownSeconds}s',
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

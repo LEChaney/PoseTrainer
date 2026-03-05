@@ -64,6 +64,10 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
       false; // When true, images are shown in order instead of randomly
   bool _randomStart = false; // When sequential, start from a random position
 
+  // Memory mode: hide reference after peek duration
+  bool _memoryMode = false;
+  int _memoryPeekSeconds = 10;
+
   /// Common time presets as (minutes, seconds, label) tuples.
   /// -1 means "Custom", -2 means "Unlimited".
   static const List<(int, int, String)> _timePresets = [
@@ -509,6 +513,48 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
                 ),
               ),
             const SizedBox(height: 12),
+            // Memory mode toggle
+            Row(
+              children: [
+                Checkbox(
+                  value: _memoryMode,
+                  onChanged: (v) => setState(() {
+                    _memoryMode = v ?? false;
+                  }),
+                ),
+                const Expanded(
+                  child: Text('Memory mode (hide reference after peek)'),
+                ),
+              ],
+            ),
+            if (_memoryMode)
+              Padding(
+                padding: const EdgeInsets.only(left: 32),
+                child: Row(
+                  children: [
+                    Text('Peek duration:', style: theme.textTheme.bodyMedium),
+                    const SizedBox(width: 8),
+                    DropdownButton<int>(
+                      value: _memoryPeekSeconds,
+                      isDense: true,
+                      underline: const SizedBox.shrink(),
+                      items: const [
+                        DropdownMenuItem(value: 5, child: Text('5s')),
+                        DropdownMenuItem(value: 10, child: Text('10s')),
+                        DropdownMenuItem(value: 15, child: Text('15s')),
+                        DropdownMenuItem(value: 20, child: Text('20s')),
+                        DropdownMenuItem(value: 30, child: Text('30s')),
+                        DropdownMenuItem(value: 45, child: Text('45s')),
+                        DropdownMenuItem(value: 60, child: Text('1m')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _memoryPeekSeconds = v);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 12),
             // Start session button
             FilledButton(
               onPressed: () => _startSession(context, service),
@@ -785,6 +831,7 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
           images: images,
           driveService: service,
           secondsPerImage: seconds,
+          memoryModeSeconds: _memoryMode ? _memoryPeekSeconds : null,
         ),
       ),
     );
@@ -1015,11 +1062,13 @@ class _DriveSessionRunnerScreen extends StatefulWidget {
   final List<DriveImageFile> images;
   final GoogleDriveFolderService driveService;
   final int? secondsPerImage;
+  final int? memoryModeSeconds;
 
   const _DriveSessionRunnerScreen({
     required this.images,
     required this.driveService,
     required this.secondsPerImage,
+    this.memoryModeSeconds,
   });
 
   @override
@@ -1107,6 +1156,7 @@ class _DriveSessionRunnerScreenState extends State<_DriveSessionRunnerScreen> {
           sourceUrl: sourceUrl,
           timeLimitSeconds: widget.secondsPerImage,
           sessionMode: true,
+          memoryModeSeconds: widget.memoryModeSeconds,
         ),
       ),
     );

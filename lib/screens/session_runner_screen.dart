@@ -16,10 +16,13 @@ import 'history_screen.dart';
 class SessionRunnerScreen extends StatefulWidget {
   final List<ReferenceResult> items;
   final int? secondsPerImage; // null => unlimited/manual finish
+  final int?
+  memoryModeSeconds; // when set, hide reference after this many seconds
   const SessionRunnerScreen({
     super.key,
     required this.items,
     required this.secondsPerImage,
+    this.memoryModeSeconds,
   });
 
   @override
@@ -70,6 +73,7 @@ class _SessionRunnerScreenState extends State<SessionRunnerScreen> {
           sourceUrl: sourceUrl,
           timeLimitSeconds: widget.secondsPerImage,
           sessionMode: true,
+          memoryModeSeconds: widget.memoryModeSeconds,
         ),
       ),
     );

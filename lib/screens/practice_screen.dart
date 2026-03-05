@@ -41,6 +41,8 @@ class PracticeScreen extends StatefulWidget {
   final String sourceUrl;
   final int? timeLimitSeconds; // when set, shows countdown and auto-finishes
   final bool sessionMode; // when true, pop PracticeResult instead of navigating
+  final int?
+  memoryModeSeconds; // when set, hide reference after this many seconds
   const PracticeScreen({
     super.key,
     this.reference,
@@ -48,6 +50,7 @@ class PracticeScreen extends StatefulWidget {
     required this.sourceUrl,
     this.timeLimitSeconds,
     this.sessionMode = false,
+    this.memoryModeSeconds,
   });
   @override
   State<PracticeScreen> createState() => _PracticeScreenState();
@@ -74,6 +77,11 @@ class _PracticeScreenState extends State<PracticeScreen>
   // Countdown state (session mode)
   Timer? _countdown;
   int _remainingSec = 0;
+
+  // Memory mode state: reference hidden after peek duration
+  bool _referenceHidden = false;
+  Timer? _memoryTimer;
+  int _memoryRemainingSec = 0;
 
   // Pixel density / base sizing
   int _baseWidthPx = 0; // canvas extent tracked for export sizing
@@ -171,6 +179,24 @@ class _PracticeScreenState extends State<PracticeScreen>
           return;
         }
         setState(() => _remainingSec--);
+      });
+    }
+
+    // Start memory mode timer if configured
+    final memoryLimit = widget.memoryModeSeconds;
+    if (memoryLimit != null && memoryLimit > 0) {
+      _memoryRemainingSec = memoryLimit;
+      _memoryTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted) return;
+        if (_memoryRemainingSec <= 1) {
+          t.cancel();
+          setState(() {
+            _memoryRemainingSec = 0;
+            _referenceHidden = true;
+          });
+          return;
+        }
+        setState(() => _memoryRemainingSec--);
       });
     }
   }
@@ -301,6 +327,7 @@ class _PracticeScreenState extends State<PracticeScreen>
   void dispose() {
     _ticker.dispose();
     _countdown?.cancel();
+    _memoryTimer?.cancel();
     // Dispose only if we still own the backing image. After navigation to
     // ReviewScreen the image is displayed there and must remain valid.
     if (!_handedOff) {
@@ -390,6 +417,10 @@ class _PracticeScreenState extends State<PracticeScreen>
   Widget _buildBody() => ReferenceDrawSplit(
     referenceImage: widget.reference,
     referenceUrl: widget.referenceUrl,
+    hideReference: _referenceHidden,
+    memoryCountdownSeconds: _memoryRemainingSec > 0
+        ? _memoryRemainingSec
+        : null,
     letterboxReference: true,
     letterboxDrawing: true,
     // Provide the rail to the dedicated left slot so it never overlaps the reference

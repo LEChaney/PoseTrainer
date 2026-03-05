@@ -48,6 +48,9 @@ class _SearchScreenState extends State<SearchScreen>
   bool _showProfilerHud = false;
   bool _disableImages = false; // when true, do not build Image.network
   bool _debugCorsSafeImages = false; // when true, use CORS-safe debug images
+  // Memory mode: hide reference after a peek duration
+  bool _memoryMode = false;
+  int _memoryPeekSeconds = 10; // how long to show reference before hiding
   // HUD ticker moved into the HUD widget to avoid rebuilding the whole screen.
 
   /// Common time presets as (minutes, seconds) pairs. -1 means "Custom".
@@ -376,6 +379,7 @@ class _SearchScreenState extends State<SearchScreen>
         builder: (_) => SessionRunnerScreen(
           items: items,
           secondsPerImage: _unlimited ? null : _totalSeconds,
+          memoryModeSeconds: _memoryMode ? _memoryPeekSeconds : null,
         ),
       ),
     );
@@ -420,6 +424,8 @@ class _SearchScreenState extends State<SearchScreen>
                     ),
                     const SizedBox(height: 8),
                     Row(children: [_buildUnlimitedToggle()]),
+                    const SizedBox(height: 8),
+                    _buildMemoryModeCluster(),
                     const SizedBox(height: 8),
                     SizedBox(width: double.infinity, child: startButton),
                   ],
@@ -505,8 +511,13 @@ class _SearchScreenState extends State<SearchScreen>
                 const SizedBox(width: 12),
               ];
 
-              return Row(
-                children: [...leftControls, const Spacer(), startButton],
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [...leftControls, const Spacer(), startButton]),
+                  const SizedBox(height: 4),
+                  _buildMemoryModeCluster(),
+                ],
               );
             },
           ),
@@ -690,6 +701,48 @@ class _SearchScreenState extends State<SearchScreen>
           value: _unlimited,
           onChanged: (v) => setState(() => _unlimited = v),
         ),
+      ],
+    );
+  }
+
+  /// Memory mode presets for how long the reference is shown.
+  static const List<(int, String)> _memoryPeekPresets = [
+    (5, '5s'),
+    (10, '10s'),
+    (15, '15s'),
+    (20, '20s'),
+    (30, '30s'),
+    (45, '45s'),
+    (60, '1m'),
+  ];
+
+  /// Builds the memory mode toggle + peek duration control.
+  Widget _buildMemoryModeCluster() {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Checkbox(
+          value: _memoryMode,
+          onChanged: (v) => setState(() => _memoryMode = v ?? false),
+        ),
+        Text('Memory mode', style: theme.textTheme.labelMedium),
+        if (_memoryMode) ...[
+          const SizedBox(width: 12),
+          Text('Peek:', style: theme.textTheme.labelMedium),
+          const SizedBox(width: 6),
+          DropdownButton<int>(
+            value: _memoryPeekSeconds,
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            items: _memoryPeekPresets.map((preset) {
+              return DropdownMenuItem(value: preset.$1, child: Text(preset.$2));
+            }).toList(),
+            onChanged: (v) {
+              if (v != null) setState(() => _memoryPeekSeconds = v);
+            },
+          ),
+        ],
       ],
     );
   }
