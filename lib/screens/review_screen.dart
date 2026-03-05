@@ -605,7 +605,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   vertical: 8,
                 ),
                 child: Text(
-                  'Drag to pan • Wheel to zoom • Pinch to zoom',
+                  'Drag to pan • Ctrl+drag to zoom • Wheel to zoom • Pinch to zoom',
                   style: theme.textTheme.bodySmall?.copyWith(color: fg),
                   textAlign: TextAlign.center,
                 ),
@@ -768,15 +768,34 @@ class _InteractiveDecodedOverlayState
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
     _startFocal ??= details.focalPoint;
-    final s = details.scale;
-    final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
-    final anchor = details.focalPoint;
-    final newOffset = anchor - (_startFocal! - _baseOffset) * s;
-    setState(() {
-      _scale = newScale;
-      _offset = newOffset;
-    });
-    widget.onTransform?.call(_scale, _offset);
+    if (HardwareKeyboard.instance.isControlPressed &&
+        details.pointerCount < 2) {
+      // Ctrl+drag: horizontal movement zooms, anchored at the drag-start focal
+      // point. Works for mouse and tablet pen alike because this runs through
+      // the GestureDetector rather than a device-kind-specific Listener path.
+      final dx = details.focalPoint.dx - _startFocal!.dx;
+      final newScale = (_baseScale * math.pow(2, dx / 200)).clamp(
+        _minScale,
+        _maxScale,
+      );
+      final newOffset =
+          _startFocal! - (_startFocal! - _baseOffset) * (newScale / _baseScale);
+      setState(() {
+        _scale = newScale;
+        _offset = newOffset;
+      });
+      widget.onTransform?.call(_scale, _offset);
+    } else {
+      final s = details.scale;
+      final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
+      final anchor = details.focalPoint;
+      final newOffset = anchor - (_startFocal! - _baseOffset) * s;
+      setState(() {
+        _scale = newScale;
+        _offset = newOffset;
+      });
+      widget.onTransform?.call(_scale, _offset);
+    }
   }
 
   void _onScaleEnd(ScaleEndDetails _) {
@@ -808,13 +827,18 @@ class _InteractiveDecodedOverlayState
   }
 
   void _onPointerMove(PointerMoveEvent e) {
-    if (_mousePanning && _lastMousePos != null) {
+    // When Ctrl is held, onScaleUpdate handles zoom; don't also pan.
+    if (_mousePanning &&
+        _lastMousePos != null &&
+        !HardwareKeyboard.instance.isControlPressed) {
       final delta = e.position - _lastMousePos!;
       setState(() {
         _offset += delta;
         _lastMousePos = e.position;
       });
       widget.onTransform?.call(_scale, _offset);
+    } else {
+      _lastMousePos = e.position; // keep in sync to avoid jump on Ctrl release
     }
   }
 
@@ -920,15 +944,31 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
     _startFocal ??= details.focalPoint;
-    final s = details.scale;
-    final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
-    final anchor = details.focalPoint;
-    final newOffset = anchor - (_startFocal! - _baseOffset) * s;
-    setState(() {
-      _scale = newScale;
-      _offset = newOffset;
-    });
-    widget.onTransform?.call(_scale, _offset);
+    if (HardwareKeyboard.instance.isControlPressed &&
+        details.pointerCount < 2) {
+      final dx = details.focalPoint.dx - _startFocal!.dx;
+      final newScale = (_baseScale * math.pow(2, dx / 200)).clamp(
+        _minScale,
+        _maxScale,
+      );
+      final newOffset =
+          _startFocal! - (_startFocal! - _baseOffset) * (newScale / _baseScale);
+      setState(() {
+        _scale = newScale;
+        _offset = newOffset;
+      });
+      widget.onTransform?.call(_scale, _offset);
+    } else {
+      final s = details.scale;
+      final newScale = (_baseScale * s).clamp(_minScale, _maxScale);
+      final anchor = details.focalPoint;
+      final newOffset = anchor - (_startFocal! - _baseOffset) * s;
+      setState(() {
+        _scale = newScale;
+        _offset = newOffset;
+      });
+      widget.onTransform?.call(_scale, _offset);
+    }
   }
 
   void _onScaleEnd(ScaleEndDetails _) {
@@ -960,13 +1000,17 @@ class _InteractiveUrlOverlayState extends State<_InteractiveUrlOverlay> {
   }
 
   void _onPointerMove(PointerMoveEvent e) {
-    if (_mousePanning && _lastMousePos != null) {
+    if (_mousePanning &&
+        _lastMousePos != null &&
+        !HardwareKeyboard.instance.isControlPressed) {
       final delta = e.position - _lastMousePos!;
       setState(() {
         _offset += delta;
         _lastMousePos = e.position;
       });
       widget.onTransform?.call(_scale, _offset);
+    } else {
+      _lastMousePos = e.position;
     }
   }
 
