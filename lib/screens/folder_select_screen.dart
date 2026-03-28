@@ -115,6 +115,32 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
                   onPressed: () => setState(() => _selectedIds.clear()),
                   child: Text('Clear ($selectedCount)'),
                 ),
+              // Refresh all folders button
+              if (driveService.isAuthenticated && folders.isNotEmpty)
+                IconButton(
+                  tooltip: driveService.isRefreshingAny
+                      ? 'Refreshing...'
+                      : 'Refresh folder caches',
+                  icon: driveService.isRefreshingAny
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                  onPressed: driveService.isRefreshingAny
+                      ? null
+                      : () async {
+                          await driveService.refreshAllFolders();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('All folder caches refreshed'),
+                              ),
+                            );
+                          }
+                        },
+                ),
               // Add folder button
               if (driveService.isAuthenticated)
                 IconButton(
@@ -310,6 +336,7 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
         return _FolderCard(
           folder: folder,
           selected: selected,
+          isRefreshing: service.isRefreshing(folder.id),
           onToggle: () {
             setState(() {
               if (selected) {
@@ -775,42 +802,52 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     if (_selectedIds.isEmpty) return;
 
     final seconds = _unlimited ? null : _totalSeconds;
+    final folderIds = _selectedIds.toList();
     infoLog(
-      'Starting folder session: ${_selectedIds.length} folders, count=$_count, ${_unlimited ? 'unlimited' : '${seconds}s'}',
+      'Starting folder session: ${folderIds.length} folders, count=$_count, ${_unlimited ? 'unlimited' : '${seconds}s'}',
       tag: 'FolderSelect',
     );
 
-    // Show loading dialog while sampling images
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Preparing session...'),
-              ],
+    // Check if all selected folders have cached image data
+    final allCached = folderIds.every(
+      (id) => service.hasCachedImages(id),
+    );
+
+    // Only show loading dialog if we need to scan from scratch
+    if (!allCached) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Preparing session...'),
+                ],
+              ),
             ),
           ),
         ),
-      ),
-    );
+      );
+    }
 
-    // Sample images from selected folders
+    // Sample images from selected folders (instant if cached)
     final images = await service.sampleImages(
-      _selectedIds.toList(),
+      folderIds,
       _count,
       sequential: _sequential,
       randomStart: _randomStart,
     );
 
     if (!mounted) return;
-    Navigator.of(context).pop(); // Close loading dialog
+    if (!allCached) {
+      Navigator.of(context).pop(); // Close loading dialog
+    }
 
     if (images.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -823,6 +860,19 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     }
 
     infoLog('Sampled ${images.length} images for session', tag: 'FolderSelect');
+
+    // Kick off background refresh for stale folder caches (non-blocking)
+    final staleIds = folderIds.where(
+      (id) => service.isCacheStale(id),
+    ).toList();
+    if (staleIds.isNotEmpty) {
+      infoLog(
+        '${staleIds.length} stale folder caches — refreshing in background',
+        tag: 'FolderSelect',
+      );
+      // Fire-and-forget: don't await, let it run while user practices
+      service.refreshStaleFolders(folderIds);
+    }
 
     // Navigate to Drive session runner (custom implementation for Drive images)
     Navigator.of(context).push(
@@ -909,15 +959,27 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
 class _FolderCard extends StatelessWidget {
   final DriveFolderInfo folder;
   final bool selected;
+  final bool isRefreshing;
   final VoidCallback onToggle;
   final VoidCallback onRemove;
 
   const _FolderCard({
     required this.folder,
     required this.selected,
+    this.isRefreshing = false,
     required this.onToggle,
     required this.onRemove,
   });
+
+  /// Format a duration into a human-readable relative time string.
+  static String _formatTimeAgo(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${(diff.inDays / 7).floor()}w ago';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -981,11 +1043,34 @@ class _FolderCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    '${folder.imageCount} image${folder.imageCount == 1 ? '' : 's'}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${folder.imageCount} image${folder.imageCount == 1 ? '' : 's'}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      if (isRefreshing)
+                        const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 1.5),
+                        )
+                      else if (folder.lastScannedAt != null)
+                        Tooltip(
+                          message:
+                              'Cache last refreshed ${_formatTimeAgo(folder.lastScannedAt!)}',
+                          child: Icon(
+                            Icons.cached,
+                            size: 12,
+                            color: theme.colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.5),
+                          ),
+                        ),
+                    ],
                   ),
                   if (selected)
                     Padding(

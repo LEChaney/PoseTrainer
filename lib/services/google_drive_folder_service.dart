@@ -63,6 +63,7 @@ class DriveFolderInfo {
   final DateTime? modifiedTime;
   final int imageCount; // Cached count from last scan
   final List<String> previewUrls; // Thumbnail URLs (up to 4)
+  final DateTime? lastScannedAt; // When image cache was last built
 
   DriveFolderInfo({
     required this.id,
@@ -71,6 +72,7 @@ class DriveFolderInfo {
     this.modifiedTime,
     this.imageCount = 0,
     this.previewUrls = const [],
+    this.lastScannedAt,
   });
 
   DriveFolderInfo copyWith({
@@ -80,6 +82,7 @@ class DriveFolderInfo {
     DateTime? modifiedTime,
     int? imageCount,
     List<String>? previewUrls,
+    DateTime? lastScannedAt,
   }) {
     return DriveFolderInfo(
       id: id ?? this.id,
@@ -88,6 +91,7 @@ class DriveFolderInfo {
       modifiedTime: modifiedTime ?? this.modifiedTime,
       imageCount: imageCount ?? this.imageCount,
       previewUrls: previewUrls ?? this.previewUrls,
+      lastScannedAt: lastScannedAt ?? this.lastScannedAt,
     );
   }
 
@@ -98,6 +102,7 @@ class DriveFolderInfo {
     'modifiedTime': modifiedTime?.toIso8601String(),
     'imageCount': imageCount,
     'previewUrls': previewUrls,
+    'lastScannedAt': lastScannedAt?.toIso8601String(),
   };
 
   factory DriveFolderInfo.fromJson(Map<String, dynamic> json) {
@@ -114,6 +119,9 @@ class DriveFolderInfo {
               ?.map((e) => e as String)
               .toList() ??
           [],
+      lastScannedAt: json['lastScannedAt'] != null
+          ? DateTime.parse(json['lastScannedAt'] as String)
+          : null,
     );
   }
 }
@@ -146,6 +154,26 @@ class DriveImageFile {
       size: file.size != null ? int.tryParse(file.size!) : null,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'mimeType': mimeType,
+    'thumbnailLink': thumbnailLink,
+    'webContentLink': webContentLink,
+    'size': size,
+  };
+
+  factory DriveImageFile.fromJson(Map<String, dynamic> json) {
+    return DriveImageFile(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      mimeType: json['mimeType'] as String?,
+      thumbnailLink: json['thumbnailLink'] as String?,
+      webContentLink: json['webContentLink'] as String?,
+      size: json['size'] as int?,
+    );
+  }
 }
 
 /// Service for Google Drive folder access using OAuth2.
@@ -160,6 +188,11 @@ class DriveImageFile {
 class GoogleDriveFolderService extends ChangeNotifier {
   static const String _tag = 'GoogleDriveFolderService';
   static const String _foldersBoxName = 'google_drive_folders';
+  static const String _imageCacheBoxName = 'google_drive_image_cache';
+
+  /// How long before a folder's cached image list is considered stale.
+  /// Stale caches are refreshed in the background without blocking sessions.
+  static const Duration staleCacheThreshold = Duration(hours: 24);
 
   // --- Member Fields ---
 
@@ -185,6 +218,9 @@ class GoogleDriveFolderService extends ChangeNotifier {
   /// Whether authentication is in progress.
   bool _isAuthenticating = false;
 
+  /// Folder IDs currently being refreshed in the background.
+  final Set<String> _refreshingFolderIds = {};
+
   /// List of configured folders.
   final List<DriveFolderInfo> _folders = [];
 
@@ -197,6 +233,24 @@ class GoogleDriveFolderService extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   bool get isInitialized => _isInitialized;
   bool get isAuthenticating => _isAuthenticating;
+  bool isRefreshing(String folderId) =>
+      _refreshingFolderIds.contains(folderId);
+  bool get isRefreshingAny => _refreshingFolderIds.isNotEmpty;
+
+  /// Whether a folder's image cache exists (persisted or in-memory).
+  bool hasCachedImages(String folderId) =>
+      _imageCache.containsKey(folderId);
+
+  /// Whether a folder's cache is stale (older than [staleCacheThreshold]).
+  bool isCacheStale(String folderId) {
+    final folder = _folders.cast<DriveFolderInfo?>().firstWhere(
+          (f) => f?.id == folderId,
+          orElse: () => null,
+        );
+    if (folder == null || folder.lastScannedAt == null) return true;
+    return DateTime.now().difference(folder.lastScannedAt!) >
+        staleCacheThreshold;
+  }
 
   // --- Initialization ---
 
@@ -449,6 +503,10 @@ class GoogleDriveFolderService extends ChangeNotifier {
       }
 
       infoLog('Loaded ${_folders.length} persisted folders', tag: _tag);
+
+      // Also load persisted image cache
+      await _loadPersistedImageCache();
+
       notifyListeners();
     } catch (e, stack) {
       errorLog(
@@ -470,6 +528,94 @@ class GoogleDriveFolderService extends ChangeNotifier {
     } catch (e, stack) {
       errorLog(
         'Failed to persist folders',
+        tag: _tag,
+        error: e,
+        stackTrace: stack,
+      );
+    }
+  }
+
+  /// Load persisted image cache from Hive.
+  Future<void> _loadPersistedImageCache() async {
+    try {
+      final box = await Hive.openBox<dynamic>(_imageCacheBoxName);
+
+      int loadedCount = 0;
+      for (final folder in _folders) {
+        final imageJsonList = box.get(folder.id) as List<dynamic>?;
+        if (imageJsonList != null && imageJsonList.isNotEmpty) {
+          final images = imageJsonList
+              .map((json) => DriveImageFile.fromJson(
+                    Map<String, dynamic>.from(json as Map),
+                  ))
+              .toList();
+          _imageCache[folder.id] = images;
+          loadedCount++;
+        }
+      }
+
+      if (loadedCount > 0) {
+        infoLog(
+          'Loaded persisted image cache for $loadedCount folders',
+          tag: _tag,
+        );
+      }
+    } catch (e, stack) {
+      errorLog(
+        'Failed to load persisted image cache',
+        tag: _tag,
+        error: e,
+        stackTrace: stack,
+      );
+    }
+  }
+
+  /// Persist image cache for a specific folder to Hive.
+  Future<void> _persistImageCacheForFolder(
+    String folderId,
+    List<DriveImageFile> images,
+  ) async {
+    try {
+      final box = await Hive.openBox<dynamic>(_imageCacheBoxName);
+      final imageJsonList = images.map((img) => img.toJson()).toList();
+      await box.put(folderId, imageJsonList);
+      debugLog(
+        'Persisted ${images.length} images for folder $folderId',
+        tag: _tag,
+      );
+    } catch (e, stack) {
+      errorLog(
+        'Failed to persist image cache for $folderId',
+        tag: _tag,
+        error: e,
+        stackTrace: stack,
+      );
+    }
+  }
+
+  /// Remove persisted image cache for a folder.
+  Future<void> _removePersistedImageCache(String folderId) async {
+    try {
+      final box = await Hive.openBox<dynamic>(_imageCacheBoxName);
+      await box.delete(folderId);
+    } catch (e, stack) {
+      errorLog(
+        'Failed to remove persisted image cache for $folderId',
+        tag: _tag,
+        error: e,
+        stackTrace: stack,
+      );
+    }
+  }
+
+  /// Clear all persisted image cache.
+  Future<void> _clearPersistedImageCache() async {
+    try {
+      final box = await Hive.openBox<dynamic>(_imageCacheBoxName);
+      await box.clear();
+    } catch (e, stack) {
+      errorLog(
+        'Failed to clear persisted image cache',
         tag: _tag,
         error: e,
         stackTrace: stack,
@@ -537,6 +683,7 @@ class GoogleDriveFolderService extends ChangeNotifier {
 
     // Scan folder for images to get count and preview thumbnails
     final images = await scanFolder(folder.id);
+    final now = DateTime.now();
 
     // Extract preview URLs (first 4 images with thumbnails)
     final previewUrls = images
@@ -545,14 +692,18 @@ class GoogleDriveFolderService extends ChangeNotifier {
         .map((img) => img.thumbnailLink!)
         .toList();
 
-    // Add folder with updated metadata
+    // Add folder with updated metadata including scan timestamp
     final folderWithMetadata = folder.copyWith(
       imageCount: images.length,
       previewUrls: previewUrls,
+      lastScannedAt: now,
     );
 
     _folders.add(folderWithMetadata);
     await _persistFolders();
+
+    // Persist image cache for this folder
+    await _persistImageCacheForFolder(folder.id, images);
 
     infoLog(
       'Folder added: ${folder.name} (${images.length} images)',
@@ -569,6 +720,7 @@ class GoogleDriveFolderService extends ChangeNotifier {
     if (_folders.length < initialLength) {
       _imageCache.remove(folderId);
       await _persistFolders();
+      await _removePersistedImageCache(folderId);
       infoLog('Removed folder: $folderId', tag: _tag);
       notifyListeners();
     }
@@ -580,22 +732,27 @@ class GoogleDriveFolderService extends ChangeNotifier {
     _folders.clear();
     _imageCache.clear();
     await _persistFolders();
+    await _clearPersistedImageCache();
     notifyListeners();
   }
 
   // --- Image Scanning ---
 
   /// Scan a folder recursively for image files.
+  ///
+  /// Returns cached images immediately if available (persisted or in-memory).
+  /// Only hits the Drive API if no cache exists for this folder.
   Future<List<DriveImageFile>> scanFolder(String folderId) async {
-    if (_driveApi == null) {
-      warningLog('Cannot scan folder: not authenticated', tag: _tag);
-      return [];
-    }
-
-    // Check cache first
+    // Check in-memory cache first (fastest)
     if (_imageCache.containsKey(folderId)) {
       debugLog('Returning cached images for folder: $folderId', tag: _tag);
       return _imageCache[folderId]!;
+    }
+
+    // Not authenticated — can't scan from API
+    if (_driveApi == null) {
+      warningLog('Cannot scan folder: not authenticated', tag: _tag);
+      return [];
     }
 
     infoLog('Scanning folder recursively: $folderId', tag: _tag);
@@ -604,14 +761,131 @@ class GoogleDriveFolderService extends ChangeNotifier {
       final images = <DriveImageFile>[];
       await _scanFolderRecursive(folderId, images);
 
-      // Cache results
+      // Cache results in-memory and persist to Hive
       _imageCache[folderId] = images;
+      await _persistImageCacheForFolder(folderId, images);
+
+      // Update folder's lastScannedAt
+      _updateFolderScanTimestamp(folderId, images.length);
 
       infoLog('Scan complete: ${images.length} images found', tag: _tag);
       return images;
     } catch (e, stack) {
       errorLog('Failed to scan folder', tag: _tag, error: e, stackTrace: stack);
       return [];
+    }
+  }
+
+  /// Force re-scan a folder from Drive API, ignoring any cached data.
+  /// Updates both in-memory and persisted caches.
+  /// Returns the refreshed image list.
+  Future<List<DriveImageFile>> refreshFolder(String folderId) async {
+    if (_driveApi == null) {
+      warningLog('Cannot refresh folder: not authenticated', tag: _tag);
+      return _imageCache[folderId] ?? [];
+    }
+
+    infoLog('Force-refreshing folder: $folderId', tag: _tag);
+    _refreshingFolderIds.add(folderId);
+    notifyListeners();
+
+    try {
+      final images = <DriveImageFile>[];
+      await _scanFolderRecursive(folderId, images);
+
+      // Update caches
+      _imageCache[folderId] = images;
+      await _persistImageCacheForFolder(folderId, images);
+
+      // Update folder metadata (image count, previews, scan timestamp)
+      _updateFolderAfterRefresh(folderId, images);
+
+      infoLog(
+        'Refresh complete for $folderId: ${images.length} images',
+        tag: _tag,
+      );
+      return images;
+    } catch (e, stack) {
+      errorLog(
+        'Failed to refresh folder $folderId',
+        tag: _tag,
+        error: e,
+        stackTrace: stack,
+      );
+      return _imageCache[folderId] ?? [];
+    } finally {
+      _refreshingFolderIds.remove(folderId);
+      notifyListeners();
+    }
+  }
+
+  /// Refresh all selected folders that have stale caches.
+  /// Runs in the background without blocking the caller.
+  /// Returns a Future that completes when all refreshes are done.
+  Future<void> refreshStaleFolders(List<String> folderIds) async {
+    final staleIds = folderIds.where(isCacheStale).toList();
+    if (staleIds.isEmpty) {
+      debugLog('No stale folders to refresh', tag: _tag);
+      return;
+    }
+
+    infoLog(
+      'Refreshing ${staleIds.length} stale folders in background',
+      tag: _tag,
+    );
+
+    // Refresh stale folders concurrently
+    await Future.wait(
+      staleIds.map((id) => refreshFolder(id)),
+      eagerError: false,
+    );
+  }
+
+  /// Refresh all configured folders regardless of staleness.
+  Future<void> refreshAllFolders() async {
+    if (_driveApi == null) {
+      warningLog('Cannot refresh: not authenticated', tag: _tag);
+      return;
+    }
+
+    infoLog('Refreshing all ${_folders.length} folders', tag: _tag);
+    await Future.wait(
+      _folders.map((f) => refreshFolder(f.id)),
+      eagerError: false,
+    );
+  }
+
+  /// Update a folder's lastScannedAt timestamp and image count.
+  void _updateFolderScanTimestamp(String folderId, int imageCount) {
+    final index = _folders.indexWhere((f) => f.id == folderId);
+    if (index >= 0) {
+      _folders[index] = _folders[index].copyWith(
+        imageCount: imageCount,
+        lastScannedAt: DateTime.now(),
+      );
+      _persistFolders(); // fire-and-forget
+    }
+  }
+
+  /// Update folder metadata after a refresh (count, previews, timestamp).
+  void _updateFolderAfterRefresh(
+    String folderId,
+    List<DriveImageFile> images,
+  ) {
+    final index = _folders.indexWhere((f) => f.id == folderId);
+    if (index >= 0) {
+      final previewUrls = images
+          .where((img) => img.thumbnailLink != null)
+          .take(4)
+          .map((img) => img.thumbnailLink!)
+          .toList();
+
+      _folders[index] = _folders[index].copyWith(
+        imageCount: images.length,
+        previewUrls: previewUrls,
+        lastScannedAt: DateTime.now(),
+      );
+      _persistFolders(); // fire-and-forget
     }
   }
 
