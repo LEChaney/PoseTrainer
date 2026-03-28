@@ -809,9 +809,7 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     );
 
     // Check if all selected folders have cached image data
-    final allCached = folderIds.every(
-      (id) => service.hasCachedImages(id),
-    );
+    final allCached = folderIds.every((id) => service.hasCachedImages(id));
 
     // Only show loading dialog if we need to scan from scratch
     if (!allCached) {
@@ -862,9 +860,7 @@ class _FolderSelectScreenState extends State<FolderSelectScreen> {
     infoLog('Sampled ${images.length} images for session', tag: 'FolderSelect');
 
     // Kick off background refresh for stale folder caches (non-blocking)
-    final staleIds = folderIds.where(
-      (id) => service.isCacheStale(id),
-    ).toList();
+    final staleIds = folderIds.where((id) => service.isCacheStale(id)).toList();
     if (staleIds.isNotEmpty) {
       infoLog(
         '${staleIds.length} stale folder caches — refreshing in background',

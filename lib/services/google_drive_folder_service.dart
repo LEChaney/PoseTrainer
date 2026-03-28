@@ -233,20 +233,18 @@ class GoogleDriveFolderService extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   bool get isInitialized => _isInitialized;
   bool get isAuthenticating => _isAuthenticating;
-  bool isRefreshing(String folderId) =>
-      _refreshingFolderIds.contains(folderId);
+  bool isRefreshing(String folderId) => _refreshingFolderIds.contains(folderId);
   bool get isRefreshingAny => _refreshingFolderIds.isNotEmpty;
 
   /// Whether a folder's image cache exists (persisted or in-memory).
-  bool hasCachedImages(String folderId) =>
-      _imageCache.containsKey(folderId);
+  bool hasCachedImages(String folderId) => _imageCache.containsKey(folderId);
 
   /// Whether a folder's cache is stale (older than [staleCacheThreshold]).
   bool isCacheStale(String folderId) {
     final folder = _folders.cast<DriveFolderInfo?>().firstWhere(
-          (f) => f?.id == folderId,
-          orElse: () => null,
-        );
+      (f) => f?.id == folderId,
+      orElse: () => null,
+    );
     if (folder == null || folder.lastScannedAt == null) return true;
     return DateTime.now().difference(folder.lastScannedAt!) >
         staleCacheThreshold;
@@ -545,9 +543,11 @@ class GoogleDriveFolderService extends ChangeNotifier {
         final imageJsonList = box.get(folder.id) as List<dynamic>?;
         if (imageJsonList != null && imageJsonList.isNotEmpty) {
           final images = imageJsonList
-              .map((json) => DriveImageFile.fromJson(
-                    Map<String, dynamic>.from(json as Map),
-                  ))
+              .map(
+                (json) => DriveImageFile.fromJson(
+                  Map<String, dynamic>.from(json as Map),
+                ),
+              )
               .toList();
           _imageCache[folder.id] = images;
           loadedCount++;
@@ -868,10 +868,7 @@ class GoogleDriveFolderService extends ChangeNotifier {
   }
 
   /// Update folder metadata after a refresh (count, previews, timestamp).
-  void _updateFolderAfterRefresh(
-    String folderId,
-    List<DriveImageFile> images,
-  ) {
+  void _updateFolderAfterRefresh(String folderId, List<DriveImageFile> images) {
     final index = _folders.indexWhere((f) => f.id == folderId);
     if (index >= 0) {
       final previewUrls = images
